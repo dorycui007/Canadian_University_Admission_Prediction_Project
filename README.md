@@ -1,3 +1,7 @@
+> **Disclaimer:** This project is purely for learning purposes. The documentation is AI-generated and serves as learning material to help me understand the concepts as I write the code myself.
+
+---
+
 # University Admissions Prediction Project Plan
 
 ## Project Overview
