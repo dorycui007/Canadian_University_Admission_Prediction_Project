@@ -1,0 +1,432 @@
+# ==============================================================================
+#                    GRADE PREDICTION PROJECT CONFIGURATION
+# ==============================================================================
+#
+# This file contains all configurable parameters for the grade prediction system.
+# Environment-specific values can be overridden via environment variables.
+#
+# CONFIGURATION HIERARCHY:
+#   1. Environment variables (highest priority)
+#   2. config.yaml (this file)
+#   3. Default values in code (lowest priority)
+#
+# ==============================================================================
+#                         CONFIGURATION ARCHITECTURE
+# ==============================================================================
+#
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │                    CONFIG LOADING FLOW                                   │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │                                                                          │
+#   │   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐               │
+#   │   │ Environment │────▶│ config.yaml │────▶│   Code      │               │
+#   │   │  Variables  │     │  (this file)│     │  Defaults   │               │
+#   │   └─────────────┘     └─────────────┘     └─────────────┘               │
+#   │        HIGH               MEDIUM               LOW                       │
+#   │      PRIORITY            PRIORITY            PRIORITY                    │
+#   │                                                                          │
+#   │   EXAMPLE:                                                               │
+#   │   ─────────                                                              │
+#   │   $ export MODEL_LAMBDA=0.5  ← Overrides config.yaml setting            │
+#   │                                                                          │
+#   └─────────────────────────────────────────────────────────────────────────┘
+#
+# ==============================================================================
+
+# ==============================================================================
+#                              DATA CONFIGURATION
+# ==============================================================================
+#
+# Settings for data loading, preprocessing, and storage.
+#
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │                      DATA PATHS                                          │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │                                                                          │
+#   │   data/                                                                  │
+#   │   ├── raw/                    ← Original CSV files                      │
+#   │   │   ├── applications.csv        Student applications                  │
+#   │   │   ├── universities.csv        University metadata                   │
+#   │   │   └── programs.csv            Program metadata                      │
+#   │   └── processed/              ← Cleaned/transformed data                │
+#   │       ├── train.parquet           Training set                          │
+#   │       ├── val.parquet             Validation set                        │
+#   │       └── test.parquet            Test set                              │
+#   │                                                                          │
+#   └─────────────────────────────────────────────────────────────────────────┘
+#
+data:
+  # Paths (relative to project root)
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+
+  # File names
+  applications_file: "applications.csv"
+  universities_file: "universities.csv"
+  programs_file: "programs.csv"
+
+  # Train/validation/test split ratios
+  # Must sum to 1.0
+  split:
+    train: 0.7      # 70% for training
+    val: 0.15       # 15% for validation (hyperparameter tuning)
+    test: 0.15      # 15% for testing (final evaluation)
+
+  # Random seed for reproducible splits
+  random_seed: 42
+
+  # Missing value handling
+  missing_values:
+    # Strategy: "drop", "mean", "median", "mode", "constant"
+    numerical_strategy: "mean"
+    categorical_strategy: "mode"
+    constant_value: 0
+
+  # Feature standardization
+  standardize:
+    enabled: true
+    # Features to standardize (numerical features)
+    features:
+      - top_6_average
+      - grade_11_average
+      - grade_12_average
+
+
+# ==============================================================================
+#                          MODEL CONFIGURATION
+# ==============================================================================
+#
+# Settings for model training, hyperparameters, and regularization.
+#
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │                    MODEL SELECTION                                       │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │                                                                          │
+#   │   PRIMARY MODEL: Logistic Regression                                     │
+#   │   ─────────────────────────────────────                                  │
+#   │   • Interpretable (linear coefficients)                                 │
+#   │   • Well-calibrated with proper regularization                          │
+#   │   • Connects to MAT223 linear algebra concepts                          │
+#   │                                                                          │
+#   │   BASELINES:                                                             │
+#   │   ───────────                                                            │
+#   │   • Prior baseline (predict average admission rate)                     │
+#   │   • Stratified baseline (per-university rates)                          │
+#   │                                                                          │
+#   └─────────────────────────────────────────────────────────────────────────┘
+#
+model:
+  # Model type: "logistic", "ridge_logistic", "baseline"
+  type: "ridge_logistic"
+
+  # Logistic regression settings
+  logistic:
+    # L2 regularization parameter (lambda)
+    # Higher values = more regularization = smaller coefficients
+    #
+    #   ┌───────────────────────────────────────────────────┐
+    #   │  λ = 0:      No regularization (may overfit)      │
+    #   │  λ = 0.01:   Light regularization                 │
+    #   │  λ = 0.1:    Moderate regularization (default)    │
+    #   │  λ = 1.0:    Strong regularization                │
+    #   │  λ = 10.0:   Very strong (coefficients → 0)       │
+    #   └───────────────────────────────────────────────────┘
+    #
+    l2_lambda: 0.1
+
+    # Optimization settings (IRLS / Newton-Raphson)
+    max_iterations: 100
+    tolerance: 1.0e-6
+
+    # Whether to fit intercept term
+    fit_intercept: true
+
+    # Warm start: use previous solution as starting point
+    warm_start: false
+
+  # Embedding settings
+  embeddings:
+    enabled: true
+
+    # Embedding dimension for universities/programs
+    university_dim: 8
+    program_dim: 8
+
+    # Initialization method: "random", "pretrained"
+    initialization: "random"
+
+    # Path to pretrained embeddings (if initialization: "pretrained")
+    pretrained_path: null
+
+  # Calibration settings
+  calibration:
+    # Method: "none", "platt", "isotonic"
+    method: "platt"
+
+    # Cross-validation folds for calibration
+    cv_folds: 5
+
+
+# ==============================================================================
+#                        FEATURE CONFIGURATION
+# ==============================================================================
+#
+# Settings for feature engineering and design matrix construction.
+#
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │                    FEATURE GROUPS                                        │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │                                                                          │
+#   │   NUMERICAL (continuous):                                                │
+#   │   • top_6_average:     Main predictor, high importance                  │
+#   │   • grade_11_average:  Secondary predictor                              │
+#   │   • grade_12_average:  Secondary predictor                              │
+#   │                                                                          │
+#   │   CATEGORICAL (discrete):                                                │
+#   │   • university:        Target university (embedded or one-hot)          │
+#   │   • program:           Target program (embedded or one-hot)             │
+#   │   • province:          Student's province                               │
+#   │                                                                          │
+#   │   DERIVED (engineered):                                                  │
+#   │   • avg × is_competitive:  Interaction feature                         │
+#   │   • avg - program_cutoff:  Distance from cutoff                        │
+#   │                                                                          │
+#   └─────────────────────────────────────────────────────────────────────────┘
+#
+features:
+  # Numerical features (will be standardized)
+  numerical:
+    - top_6_average
+    - grade_11_average
+    - grade_12_average
+
+  # Categorical features
+  categorical:
+    # High-cardinality: use embeddings
+    embedded:
+      - university
+      - program
+
+    # Low-cardinality: use one-hot encoding
+    one_hot:
+      - province
+      - country
+
+  # Interaction features
+  # Format: "feature1 * feature2"
+  interactions:
+    - "top_6_average * is_competitive_program"
+    - "top_6_average * province_ontario"
+
+  # Polynomial features (degree)
+  polynomial_degree: 1  # 1 = no polynomial features
+
+  # Feature selection
+  selection:
+    enabled: false
+    method: "variance"  # "variance", "mutual_info", "lasso"
+    threshold: 0.01
+
+
+# ==============================================================================
+#                       EVALUATION CONFIGURATION
+# ==============================================================================
+#
+# Settings for model evaluation, validation, and metrics.
+#
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │                    EVALUATION METRICS                                    │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │                                                                          │
+#   │   CALIBRATION (are probabilities accurate?):                            │
+#   │   • Brier score:   Mean squared error of probabilities                  │
+#   │   • ECE:           Expected calibration error                           │
+#   │   • Reliability:   Visual calibration assessment                        │
+#   │                                                                          │
+#   │   DISCRIMINATION (can we rank applicants?):                             │
+#   │   • AUC-ROC:       Area under ROC curve                                 │
+#   │   • AUC-PR:        Area under precision-recall curve                    │
+#   │   • Accuracy:      Classification accuracy at threshold                 │
+#   │                                                                          │
+#   └─────────────────────────────────────────────────────────────────────────┘
+#
+evaluation:
+  # Primary metric for model selection
+  primary_metric: "brier_score"  # Lower is better
+
+  # All metrics to compute
+  metrics:
+    - brier_score
+    - auc_roc
+    - auc_pr
+    - ece
+    - accuracy
+    - precision
+    - recall
+    - f1
+
+  # Number of bins for calibration metrics
+  calibration_bins: 10
+
+  # Classification threshold for binary metrics
+  classification_threshold: 0.5
+
+  # Cross-validation settings
+  cross_validation:
+    enabled: true
+    n_folds: 5
+    stratified: true  # Maintain class balance in folds
+
+  # Fairness evaluation
+  fairness:
+    enabled: true
+    # Groups to evaluate
+    groups:
+      - province
+      - university
+    # Fairness metrics
+    metrics:
+      - demographic_parity
+      - equal_opportunity
+
+
+# ==============================================================================
+#                         API CONFIGURATION
+# ==============================================================================
+#
+# Settings for the FastAPI prediction service.
+#
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │                      API ARCHITECTURE                                    │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │                                                                          │
+#   │   ┌─────────┐     ┌─────────────┐     ┌─────────────┐                   │
+#   │   │ Client  │────▶│  FastAPI    │────▶│   Model     │                   │
+#   │   │ Request │     │  (uvicorn)  │     │  Inference  │                   │
+#   │   └─────────┘     └─────────────┘     └─────────────┘                   │
+#   │                         │                                                │
+#   │                         ▼                                                │
+#   │                   Rate Limiting                                          │
+#   │                   Logging                                                │
+#   │                   Caching                                                │
+#   │                                                                          │
+#   └─────────────────────────────────────────────────────────────────────────┘
+#
+api:
+  # Server settings
+  host: "0.0.0.0"
+  port: 8000
+
+  # Workers (for production)
+  workers: 1
+
+  # CORS settings
+  cors:
+    enabled: true
+    allow_origins:
+      - "http://localhost:3000"
+      - "https://yourdomain.com"
+    allow_methods:
+      - "GET"
+      - "POST"
+
+  # Rate limiting
+  rate_limit:
+    enabled: true
+    requests_per_minute: 100
+    burst_size: 20
+
+  # Request/response limits
+  max_batch_size: 1000  # Maximum applications per batch request
+  timeout_seconds: 30   # Request timeout
+
+  # Model artifact paths
+  model_path: "models/trained/logistic_model.pkl"
+  calibrator_path: "models/trained/calibrator.pkl"
+  embeddings_path: "models/trained/embeddings.pkl"
+
+  # Caching
+  cache:
+    enabled: true
+    ttl_seconds: 300  # Cache predictions for 5 minutes
+
+
+# ==============================================================================
+#                       DATABASE CONFIGURATION
+# ==============================================================================
+#
+# Settings for MongoDB (application data) and Weaviate (embeddings).
+#
+database:
+  # MongoDB settings
+  mongodb:
+    enabled: false  # Set to true when using MongoDB
+    uri: "mongodb://localhost:27017"
+    database: "grade_prediction"
+    collections:
+      applications: "applications"
+      predictions: "predictions"
+      audit_log: "audit_log"
+
+  # Weaviate settings (vector database for embeddings)
+  weaviate:
+    enabled: false  # Set to true when using Weaviate
+    url: "http://localhost:8080"
+    class_name: "ProgramEmbedding"
+
+
+# ==============================================================================
+#                       LOGGING CONFIGURATION
+# ==============================================================================
+#
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
+
+  # Output format
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+  # Log file settings
+  file:
+    enabled: true
+    path: "logs/app.log"
+    max_bytes: 10485760  # 10 MB
+    backup_count: 5
+
+
+# ==============================================================================
+#                       VISUALIZATION CONFIGURATION
+# ==============================================================================
+#
+visualization:
+  # Default figure settings
+  figure:
+    width: 10
+    height: 6
+    dpi: 100
+
+  # Style
+  style: "seaborn-v0_8-whitegrid"
+  colormap: "viridis"
+
+  # Output
+  save_format: "png"
+  output_dir: "outputs/figures"
+
+
+# ==============================================================================
+#                              TODO LIST
+# ==============================================================================
+#
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │                              TODO LIST                                   │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │                                                                          │
+#   │  [ ] Set up actual data paths when data is available                   │
+#   │  [ ] Configure MongoDB/Weaviate connection strings                     │
+#   │  [ ] Add production environment overrides                               │
+#   │  [ ] Set up secret management for credentials                          │
+#   │  [ ] Add hyperparameter search configuration                           │
+#   │  [ ] Configure CI/CD pipeline settings                                 │
+#   │                                                                          │
+#   └─────────────────────────────────────────────────────────────────────────┘
