@@ -1,4 +1,4 @@
-# University Admissions Prediction Project Plan
+# University Admissions Prediction Project
 
 ## Project Overview
 
