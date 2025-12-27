@@ -1,0 +1,529 @@
+# ==============================================================================
+# Canadian Universities Canonical Mapping File
+# ==============================================================================
+#
+# This file contains the authoritative mapping from university name variations
+# to their canonical (official) names for the University Admission Prediction
+# System.
+#
+# SOURCE: Universities Canada (https://univcan.ca) - 102 member institutions
+# UPDATED: 2024
+#
+# ==============================================================================
+#                              FILE FORMAT
+# ==============================================================================
+#
+#   Canonical Name:
+#     - variation1
+#     - variation2
+#     - ...
+#
+# All variations are matched CASE-INSENSITIVELY. The first variation should
+# always be the canonical name itself to ensure exact matches work.
+#
+# ==============================================================================
+#                           IMPORTANT DECISIONS
+# ==============================================================================
+#
+# 1. UofT CAMPUSES: Kept as 3 separate entries because they have separate
+#    OUAC admission categories and different admission requirements.
+#
+# 2. TORONTO METROPOLITAN UNIVERSITY: All "Ryerson" references map here.
+#    Name officially changed April 26, 2022.
+#
+# 3. INVALID ENTRIES: The normalizer will mark unmatched names as "INVALID"
+#    for later manual review.
+#
+# ==============================================================================
+
+
+# ==============================================================================
+#                              ONTARIO (34 MEMBERS)
+# ==============================================================================
+
+University of Toronto:
+  - University of Toronto
+  - UofT
+  - U of T
+  - Toronto
+  - UoT
+  - U.of T.
+  - University Toronto
+  # Note: Generic "University of Toronto" maps here; campus-specific below
+
+University of Toronto Mississauga:
+  - University of Toronto Mississauga
+  - UTM
+  - UofT Mississauga
+  - UOFT MISSISAUGA
+  - University of Toronto-Mississauga
+  - U of T Mississauga
+  - Toronto Mississauga
+  - UofT - Mississauga
+
+University of Toronto Scarborough:
+  - University of Toronto Scarborough
+  - UTSC
+  - UTSc
+  - UofT Scarborough
+  - scarborough campus
+  - University of Toronto-Scarborough
+  - U of T Scarborough
+  - Toronto Scarborough
+  - UofT - Scarborough
+
+University of Waterloo:
+  - University of Waterloo
+  - Waterloo
+  - UW
+  - UWaterloo
+  - UWat
+  - Uwaterloo
+  - Uni of Waterloo
+  - uWaterloo
+  # Note: "U of W" removed due to collision with University of Winnipeg
+  # Use province-based disambiguation for "U of W" inputs
+
+McMaster University:
+  - McMaster University
+  - McMaster
+  - Mac
+  - Mcmaster
+  - McMaster U
+  - MCMASTER
+
+Queen's University:
+  - Queen's University
+  - Queen's
+  - Queens University
+  - Queens
+  - Queen's U
+  - Queens U
+  - Queensu
+
+Western University:
+  - Western University
+  - Western
+  - UWO
+  - University of Western Ontario
+  - Western Ontario
+  - Western U
+
+University of Ottawa:
+  - University of Ottawa
+  - Ottawa
+  - uOttawa
+  - UOttawa
+  - U of O
+  - University Ottawa
+  - Ottawa University
+  - uOttawa / Université d'Ottawa
+
+Carleton University:
+  - Carleton University
+  - Carleton
+  - Carleton U
+  - CU
+
+York University:
+  - York University
+  - York
+  - York U
+  - YorkU
+  - Yorku
+
+Wilfrid Laurier University:
+  - Wilfrid Laurier University
+  - Laurier
+  - WLU
+  - Wilfrid Laurier
+  - Wilfred Laurier
+  - Wilfred Laurier University
+  - Laurier University
+
+Toronto Metropolitan University:
+  - Toronto Metropolitan University
+  - TMU
+  - Ryerson
+  - Ryerson University
+  - tmu-gbc
+  - TMU (formerly Ryerson)
+  - Toronto Met
+  # Note: Ryerson name changed to TMU on April 26, 2022
+
+University of Guelph:
+  - University of Guelph
+  - Guelph
+  - U of G
+  - UofG
+  - Guelph University
+
+University of Guelph-Humber:
+  - University of Guelph-Humber
+  - Guelph-Humber
+  - Guelph Humber
+  - UofGH
+  # Note: Joint program between UofG + Humber College
+
+Brock University:
+  - Brock University
+  - Brock
+  - Brock U
+
+Trent University:
+  - Trent University
+  - Trent
+  - Trent U
+
+Ontario Tech University:
+  - Ontario Tech University
+  - Ontario Tech
+  - UOIT
+  - University of Ontario Institute of Technology
+  - OntarioTech
+  - Ontario Tech U
+
+Lakehead University:
+  - Lakehead University
+  - Lakehead
+  - Lakehead U
+  - LU
+
+Laurentian University:
+  - Laurentian University
+  - Laurentian
+  - Laurentian U
+
+Nipissing University:
+  - Nipissing University
+  - Nipissing
+  - Nipissing U
+
+University of Windsor:
+  - University of Windsor
+  - Windsor
+  - U of Windsor
+  - UWindsor
+  - Windsor University
+
+OCAD University:
+  - OCAD University
+  - OCAD
+  - Ontario College of Art and Design
+  - OCADU
+
+Algoma University:
+  - Algoma University
+  - Algoma
+  - Algoma U
+
+Redeemer University:
+  - Redeemer University
+  - Redeemer
+  - Redeemer College
+
+Royal Military College of Canada:
+  - Royal Military College of Canada
+  - RMC
+  - Royal Military College
+  - RMC Canada
+
+
+# ==============================================================================
+#                              QUEBEC (19 MEMBERS)
+# ==============================================================================
+
+McGill University:
+  - McGill University
+  - McGill
+  - Mcgill
+  - McGill U
+  - MCGILL
+
+Concordia University:
+  - Concordia University
+  - Concordia
+  - Concordia U
+
+Université de Montréal:
+  - Université de Montréal
+  - UdeM
+  - U de M
+  - Universite de Montreal
+  - University of Montreal
+  - UMontreal
+
+Université Laval:
+  - Université Laval
+  - Laval
+  - Laval University
+  - Universite Laval
+  - U Laval
+
+Polytechnique Montréal:
+  - Polytechnique Montréal
+  - Polytechnique
+  - Poly Montreal
+  - Polytechnique Montreal
+
+HEC Montréal:
+  - HEC Montréal
+  - HEC
+  - HEC Montreal
+
+Bishop's University:
+  - Bishop's University
+  - Bishop's
+  - Bishops University
+  - Bishops
+
+Université du Québec à Montréal:
+  - Université du Québec à Montréal
+  - UQAM
+  - Universite du Quebec a Montreal
+
+Université de Sherbrooke:
+  - Université de Sherbrooke
+  - Sherbrooke
+  - U de Sherbrooke
+  - Universite de Sherbrooke
+
+
+# ==============================================================================
+#                         BRITISH COLUMBIA (12 MEMBERS)
+# ==============================================================================
+
+University of British Columbia:
+  - University of British Columbia
+  - UBC
+  - UBCV
+  - UBC Vancouver
+  - U of BC
+  - British Columbia
+
+University of British Columbia Okanagan:
+  - University of British Columbia Okanagan
+  - UBCO
+  - UBC Okanagan
+  - UBC-O
+
+Simon Fraser University:
+  - Simon Fraser University
+  - SFU
+  - Simon Fraser
+  - SFU University
+
+University of Victoria:
+  - University of Victoria
+  - UVic
+  - UVIC
+  - Victoria
+  - U of Vic
+  - UofVic
+
+University of Northern British Columbia:
+  - University of Northern British Columbia
+  - UNBC
+  - Northern BC
+
+Thompson Rivers University:
+  - Thompson Rivers University
+  - TRU
+  - Thompson Rivers
+
+Royal Roads University:
+  - Royal Roads University
+  - Royal Roads
+  - RRU
+
+Kwantlen Polytechnic University:
+  - Kwantlen Polytechnic University
+  - KPU
+  - Kwantlen
+
+Capilano University:
+  - Capilano University
+  - Capilano
+  - CapU
+
+Emily Carr University of Art + Design:
+  - Emily Carr University of Art + Design
+  - Emily Carr
+  - ECUAD
+  - Emily Carr University
+
+
+# ==============================================================================
+#                              ALBERTA (9 MEMBERS)
+# ==============================================================================
+
+University of Alberta:
+  - University of Alberta
+  - Alberta
+  - UofA
+  - U of A
+  - UAlberta
+  - U Alberta
+
+University of Calgary:
+  - University of Calgary
+  - Calgary
+  - UCalgary
+  - U of C
+  - UofC
+  - U Calgary
+
+University of Lethbridge:
+  - University of Lethbridge
+  - Lethbridge
+  - U of L
+  - ULethbridge
+
+MacEwan University:
+  - MacEwan University
+  - MacEwan
+  - Grant MacEwan
+  - Macewan
+
+Mount Royal University:
+  - Mount Royal University
+  - Mount Royal
+  - MRU
+  - Mt Royal
+
+Athabasca University:
+  - Athabasca University
+  - Athabasca
+  - AU
+
+
+# ==============================================================================
+#                         ATLANTIC PROVINCES
+# ==============================================================================
+
+# --- Nova Scotia ---
+
+Dalhousie University:
+  - Dalhousie University
+  - Dal
+  - Dalhousie
+  - Dalhousie U
+
+St. Francis Xavier University:
+  - St. Francis Xavier University
+  - StFX
+  - St Francis Xavier
+  - St. FX
+  - Saint Francis Xavier
+
+Acadia University:
+  - Acadia University
+  - Acadia
+  - Acadia U
+
+Saint Mary's University:
+  - Saint Mary's University
+  - SMU
+  - Saint Marys
+  - St. Mary's University
+  - St Mary's
+
+Cape Breton University:
+  - Cape Breton University
+  - CBU
+  - Cape Breton
+
+Mount Saint Vincent University:
+  - Mount Saint Vincent University
+  - MSVU
+  - Mount Saint Vincent
+  - The Mount
+
+NSCAD University:
+  - NSCAD University
+  - NSCAD
+  - Nova Scotia College of Art and Design
+
+# --- New Brunswick ---
+
+University of New Brunswick:
+  - University of New Brunswick
+  - UNB
+  - New Brunswick
+  - U of NB
+
+Mount Allison University:
+  - Mount Allison University
+  - Mount Allison
+  - Mt Allison
+  - MtA
+
+St. Thomas University:
+  - St. Thomas University
+  - St Thomas
+  - STU
+
+Université de Moncton:
+  - Université de Moncton
+  - Moncton
+  - U de Moncton
+  - Universite de Moncton
+
+# --- Newfoundland and Labrador ---
+
+Memorial University of Newfoundland:
+  - Memorial University of Newfoundland
+  - Memorial
+  - MUN
+  - Memorial University
+  - Memorial U
+
+# --- Prince Edward Island ---
+
+University of Prince Edward Island:
+  - University of Prince Edward Island
+  - UPEI
+  - PEI
+  - Prince Edward Island
+
+
+# ==============================================================================
+#                              PRAIRIES
+# ==============================================================================
+
+# --- Manitoba ---
+
+University of Manitoba:
+  - University of Manitoba
+  - Manitoba
+  - UofM
+  - U of M
+  - UManitoba
+
+University of Winnipeg:
+  - University of Winnipeg
+  - Winnipeg
+  - UWinnipeg
+  - U Winnipeg
+  # Note: "U of W" removed due to collision with University of Waterloo
+  # Use province-based disambiguation for "U of W" inputs
+
+Brandon University:
+  - Brandon University
+  - Brandon
+  - Brandon U
+
+# --- Saskatchewan ---
+
+University of Saskatchewan:
+  - University of Saskatchewan
+  - Saskatchewan
+  - USask
+  - U of S
+  - UofS
+
+University of Regina:
+  - University of Regina
+  - Regina
+  - U of R
+  - URegina

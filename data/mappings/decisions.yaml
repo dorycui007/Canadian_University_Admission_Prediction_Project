@@ -1,0 +1,61 @@
+# ==============================================================================
+# Decision Status Canonical Mapping
+# ==============================================================================
+#
+# This file contains the authoritative mapping from decision status variations
+# to their canonical (standardized) names.
+#
+# ==============================================================================
+#                              FILE FORMAT
+# ==============================================================================
+#
+#   Canonical Name:
+#     - variation1
+#     - variation2
+#     - ...
+#
+# All variations are matched CASE-INSENSITIVELY after stripping whitespace.
+#
+# ==============================================================================
+
+Accepted:
+  - accepted
+  - offer
+  - admitted
+  - admission
+  - offered
+  - accept
+
+Rejected:
+  - rejected
+  - declined
+  - denied
+  - refusal
+  - refuse
+  - reject
+
+Waitlisted:
+  - waitlisted
+  - wait listed
+  - wait-listed
+  - waiting list
+  - waitlist
+
+Deferred:
+  - deferred
+  - defer
+  - deferral
+
+Pending:
+  - pending
+  - in progress
+  - under review
+  - processing
+  - in review
+  - awaiting decision
+
+Withdrawn:
+  - withdrawn
+  - withdrew
+  - cancelled
+  - canceled

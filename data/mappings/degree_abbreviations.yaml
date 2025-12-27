@@ -1,0 +1,397 @@
+# ==============================================================================
+# Canadian University Degree Abbreviations Reference
+# ==============================================================================
+#
+# This file contains the authoritative mapping of degree abbreviations used
+# in Canadian university programs for the University Admission Prediction
+# System.
+#
+# SOURCE: OUInfo Degree Abbreviations (https://www.ontariouniversitiesinfo.ca)
+# UPDATED: 2024
+#
+# ==============================================================================
+#                              FILE FORMAT
+# ==============================================================================
+#
+#   ABBREVIATION:
+#     full_name: Full Degree Name
+#     regex: Regular expression pattern for matching
+#     level: undergraduate | graduate
+#     type: arts | science | professional | applied
+#
+# ==============================================================================
+#                           USAGE IN SYSTEM
+# ==============================================================================
+#
+# This file is used by ProgramNormalizer to:
+#   1. Extract degree type from program names
+#   2. Standardize degree abbreviations across datasets
+#   3. Enable filtering by degree type in analysis
+#
+# ==============================================================================
+
+
+# ==============================================================================
+#                        BACHELOR'S DEGREES (GENERAL)
+# ==============================================================================
+
+BA:
+  full_name: Bachelor of Arts
+  regex: '\b(b\.?a\.?|bachelor of arts)\b'
+  level: undergraduate
+  type: arts
+  common_programs:
+    - Psychology
+    - English
+    - History
+    - Political Science
+    - Economics
+    - Sociology
+
+BSc:
+  full_name: Bachelor of Science
+  regex: '\b(b\.?sc\.?|bachelor of science)\b'
+  level: undergraduate
+  type: science
+  common_programs:
+    - Computer Science
+    - Biology
+    - Chemistry
+    - Physics
+    - Mathematics
+    - Statistics
+
+BASc:
+  full_name: Bachelor of Applied Science
+  regex: '\b(b\.?a\.?sc\.?|bachelor of applied science)\b'
+  level: undergraduate
+  type: applied
+  common_programs:
+    - Engineering (various)
+    - Applied Computing
+    - Applied Mathematics
+
+BAH:
+  full_name: Bachelor of Arts (Honours)
+  regex: '\b(b\.?a\.?h\.?|bachelor of arts honours)\b'
+  level: undergraduate
+  type: arts
+
+BScH:
+  full_name: Bachelor of Science (Honours)
+  regex: '\b(b\.?sc\.?h\.?|bachelor of science honours)\b'
+  level: undergraduate
+  type: science
+
+
+# ==============================================================================
+#                        BUSINESS DEGREES
+# ==============================================================================
+
+BBA:
+  full_name: Bachelor of Business Administration
+  regex: '\b(bba|bachelor of business administration)\b'
+  level: undergraduate
+  type: professional
+  common_programs:
+    - Business Administration
+    - Management
+    - Marketing
+
+BCom:
+  full_name: Bachelor of Commerce
+  regex: '\b(b\.?com\.?|bcomm|bachelor of commerce)\b'
+  level: undergraduate
+  type: professional
+  common_programs:
+    - Commerce
+    - Accounting
+    - Finance
+    - Business
+
+BComm:
+  full_name: Bachelor of Commerce
+  regex: '\b(bcomm|b\.? ?comm\.?)\b'
+  level: undergraduate
+  type: professional
+  # Alias for BCom
+
+BAFI:
+  full_name: Bachelor of Accounting and Financial Management
+  regex: '\b(bafi|bachelor of accounting)\b'
+  level: undergraduate
+  type: professional
+  notes: Waterloo AFM program
+
+
+# ==============================================================================
+#                        COMPUTING DEGREES
+# ==============================================================================
+
+BCS:
+  full_name: Bachelor of Computer Science
+  regex: '\b(bcs|b\.?co\.?sc\.?|bachelor of computer science)\b'
+  level: undergraduate
+  type: science
+  common_programs:
+    - Computer Science
+    - Software Engineering
+
+BCoSc:
+  full_name: Bachelor of Computing Science
+  regex: '\b(b\.?co\.?sc\.?|bachelor of computing science)\b'
+  level: undergraduate
+  type: science
+
+BMath:
+  full_name: Bachelor of Mathematics
+  regex: '\b(bmath|b\.? ?math\.?|bachelor of mathematics)\b'
+  level: undergraduate
+  type: science
+  common_programs:
+    - Mathematics
+    - Computer Science (Waterloo)
+    - Statistics
+    - Actuarial Science
+  notes: Primarily used at University of Waterloo
+
+
+# ==============================================================================
+#                        ENGINEERING DEGREES
+# ==============================================================================
+
+BEng:
+  full_name: Bachelor of Engineering
+  regex: '\b(b\.?eng\.?|bachelor of engineering)\b'
+  level: undergraduate
+  type: professional
+  common_programs:
+    - Electrical Engineering
+    - Mechanical Engineering
+    - Civil Engineering
+    - Chemical Engineering
+    - Software Engineering
+
+BEngMgt:
+  full_name: Bachelor of Engineering and Management
+  regex: '\b(b\.?eng\.?mgt\.?|bachelor of engineering and management)\b'
+  level: undergraduate
+  type: professional
+  notes: Engineering with business component
+
+BSE:
+  full_name: Bachelor of Software Engineering
+  regex: '\b(bse|bachelor of software engineering)\b'
+  level: undergraduate
+  type: professional
+
+
+# ==============================================================================
+#                        HEALTH SCIENCES DEGREES
+# ==============================================================================
+
+BScN:
+  full_name: Bachelor of Science in Nursing
+  regex: '\b(bscn|b\.?sc\.?n\.?|bachelor of science in nursing)\b'
+  level: undergraduate
+  type: professional
+  common_programs:
+    - Nursing
+
+BHSc:
+  full_name: Bachelor of Health Sciences
+  regex: '\b(bhsc|b\.?h\.?sc\.?|bachelor of health science)\b'
+  level: undergraduate
+  type: science
+  common_programs:
+    - Health Sciences
+    - Public Health
+    - Biomedical Sciences
+
+BKin:
+  full_name: Bachelor of Kinesiology
+  regex: '\b(bkin|b\.? ?kin\.?|bachelor of kinesiology)\b'
+  level: undergraduate
+  type: science
+  common_programs:
+    - Kinesiology
+    - Physical Education
+    - Exercise Science
+
+BMSc:
+  full_name: Bachelor of Medical Sciences
+  regex: '\b(bmsc|bachelor of medical science)\b'
+  level: undergraduate
+  type: science
+  notes: Common pre-med degree at Western
+
+PharmD:
+  full_name: Doctor of Pharmacy
+  regex: '\b(pharmd|pharm\.?d\.?|doctor of pharmacy)\b'
+  level: graduate
+  type: professional
+
+
+# ==============================================================================
+#                        ENVIRONMENTAL DEGREES
+# ==============================================================================
+
+BES:
+  full_name: Bachelor of Environmental Studies
+  regex: '\b(bes|b\.?e\.?s\.?|bachelor of environmental studies)\b'
+  level: undergraduate
+  type: science
+  common_programs:
+    - Environmental Studies
+    - Geography
+    - Urban Planning
+  notes: Primarily used at University of Waterloo
+
+BEnvD:
+  full_name: Bachelor of Environmental Design
+  regex: '\b(benvd|bachelor of environmental design)\b'
+  level: undergraduate
+  type: arts
+
+
+# ==============================================================================
+#                        SOCIAL WORK & EDUCATION
+# ==============================================================================
+
+BSW:
+  full_name: Bachelor of Social Work
+  regex: '\b(bsw|b\.?s\.?w\.?|bachelor of social work)\b'
+  level: undergraduate
+  type: professional
+  common_programs:
+    - Social Work
+
+BEd:
+  full_name: Bachelor of Education
+  regex: '\b(bed|b\.?ed\.?|bachelor of education)\b'
+  level: undergraduate
+  type: professional
+  common_programs:
+    - Education
+    - Teaching
+
+
+# ==============================================================================
+#                        ARTS & DESIGN DEGREES
+# ==============================================================================
+
+BFA:
+  full_name: Bachelor of Fine Arts
+  regex: '\b(bfa|b\.?f\.?a\.?|bachelor of fine arts)\b'
+  level: undergraduate
+  type: arts
+  common_programs:
+    - Visual Arts
+    - Theatre
+    - Music
+    - Film
+
+BMus:
+  full_name: Bachelor of Music
+  regex: '\b(bmus|b\.?mus\.?|bachelor of music)\b'
+  level: undergraduate
+  type: arts
+  common_programs:
+    - Music
+    - Music Performance
+    - Music Education
+
+BDes:
+  full_name: Bachelor of Design
+  regex: '\b(bdes|b\.?des\.?|bachelor of design)\b'
+  level: undergraduate
+  type: arts
+
+BArch:
+  full_name: Bachelor of Architecture
+  regex: '\b(barch|b\.?arch\.?|bachelor of architecture)\b'
+  level: undergraduate
+  type: professional
+
+
+# ==============================================================================
+#                        SPECIALIZED DEGREES
+# ==============================================================================
+
+BCogSc:
+  full_name: Bachelor of Cognitive Science
+  regex: '\b(bcogsc|bachelor of cognitive science)\b'
+  level: undergraduate
+  type: science
+
+BPAPM:
+  full_name: Bachelor of Public Affairs and Policy Management
+  regex: '\b(bpapm|bachelor of public affairs)\b'
+  level: undergraduate
+  type: arts
+  notes: Carleton University program
+
+BIB:
+  full_name: Bachelor of International Business
+  regex: '\b(bib|bachelor of international business)\b'
+  level: undergraduate
+  type: professional
+
+BJourn:
+  full_name: Bachelor of Journalism
+  regex: '\b(bjourn|bachelor of journalism)\b'
+  level: undergraduate
+  type: arts
+
+BJ:
+  full_name: Bachelor of Journalism
+  regex: '\b(bj|bachelor of journalism)\b'
+  level: undergraduate
+  type: arts
+
+
+# ==============================================================================
+#                        GRADUATE DEGREES (FOR REFERENCE)
+# ==============================================================================
+
+MA:
+  full_name: Master of Arts
+  regex: '\b(m\.?a\.?|master of arts)\b'
+  level: graduate
+  type: arts
+
+MSc:
+  full_name: Master of Science
+  regex: '\b(m\.?sc\.?|master of science)\b'
+  level: graduate
+  type: science
+
+MBA:
+  full_name: Master of Business Administration
+  regex: '\b(mba|master of business administration)\b'
+  level: graduate
+  type: professional
+
+MEng:
+  full_name: Master of Engineering
+  regex: '\b(m\.?eng\.?|master of engineering)\b'
+  level: graduate
+  type: professional
+
+PhD:
+  full_name: Doctor of Philosophy
+  regex: '\b(ph\.?d\.?|doctor of philosophy)\b'
+  level: graduate
+  type: arts
+
+MD:
+  full_name: Doctor of Medicine
+  regex: '\b(m\.?d\.?|doctor of medicine)\b'
+  level: graduate
+  type: professional
+
+JD:
+  full_name: Juris Doctor
+  regex: '\b(j\.?d\.?|juris doctor)\b'
+  level: graduate
+  type: professional

@@ -78,6 +78,18 @@ pyyaml>=6.0.0
 # Used for: loading CSVs, data preprocessing, feature engineering
 pandas>=2.0.0
 
+# Fuzzy string matching
+# Used for: university/program name normalization
+rapidfuzz>=3.0.0
+
+# Encoding detection
+# Used for: detecting CSV file encodings
+chardet>=5.0.0
+
+# Flexible date parsing
+# Used for: parsing various date formats in raw data
+python-dateutil>=2.8.0
+
 # Parquet file support (efficient columnar storage)
 # Used for: saving/loading processed datasets
 pyarrow>=12.0.0
