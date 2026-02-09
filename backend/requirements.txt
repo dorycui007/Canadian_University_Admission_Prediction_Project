@@ -1,0 +1,259 @@
+# ==============================================================================
+#                    GRADE PREDICTION PROJECT DEPENDENCIES
+# ==============================================================================
+#
+# This file lists all Python dependencies for the grade prediction system.
+#
+# INSTALLATION:
+#   pip install -r requirements.txt
+#
+# DEVELOPMENT INSTALLATION:
+#   pip install -r requirements.txt
+#   pip install -r requirements-dev.txt  # (if separate dev requirements)
+#
+# ==============================================================================
+#                         DEPENDENCY ARCHITECTURE
+# ==============================================================================
+#
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │                    DEPENDENCY LAYERS                                     │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │                                                                          │
+#   │   CORE (Essential for basic functionality):                              │
+#   │   ──────────────────────────────────────────                             │
+#   │   • numpy:        Numerical computing, linear algebra                   │
+#   │   • pyyaml:       Configuration file parsing                            │
+#   │                                                                          │
+#   │   DATA (Data processing and storage):                                    │
+#   │   ────────────────────────────────────                                   │
+#   │   • pandas:       Dataframe operations                                  │
+#   │   • pyarrow:      Parquet file support                                  │
+#   │                                                                          │
+#   │   MACHINE LEARNING (Model training):                                     │
+#   │   ─────────────────────────────────                                      │
+#   │   • scikit-learn: ML utilities (metrics, validation)                    │
+#   │                                                                          │
+#   │   VISUALIZATION (Plots and figures):                                     │
+#   │   ─────────────────────────────────                                      │
+#   │   • matplotlib:   Static plots                                          │
+#   │   • seaborn:      Statistical visualizations                            │
+#   │   • plotly:       Interactive plots                                     │
+#   │                                                                          │
+#   │   API (Web service):                                                     │
+#   │   ──────────────────                                                     │
+#   │   • fastapi:      Web framework                                         │
+#   │   • uvicorn:      ASGI server                                           │
+#   │   • pydantic:     Data validation                                       │
+#   │                                                                          │
+#   │   DATABASE (Optional, for production):                                   │
+#   │   ────────────────────────────────────                                   │
+#   │   • pymongo:      MongoDB client                                        │
+#   │   • weaviate-client: Weaviate vector DB                                 │
+#   │                                                                          │
+#   └─────────────────────────────────────────────────────────────────────────┘
+#
+# ==============================================================================
+
+
+# ==============================================================================
+# CORE DEPENDENCIES
+# These are required for basic functionality
+# ==============================================================================
+
+# Numerical computing and linear algebra (MAT223)
+# Used for: vector operations, matrix algebra, QR decomposition
+numpy>=1.24.0,<2.0.0
+
+# Configuration file parsing
+# Used for: reading config.yaml
+pyyaml>=6.0.0
+
+
+# ==============================================================================
+# DATA PROCESSING
+# For loading, cleaning, and transforming data
+# ==============================================================================
+
+# DataFrame operations and data manipulation
+# Used for: loading CSVs, data preprocessing, feature engineering
+pandas>=2.0.0
+
+# Fuzzy string matching
+# Used for: university/program name normalization
+rapidfuzz>=3.0.0
+
+# Encoding detection
+# Used for: detecting CSV file encodings
+chardet>=5.0.0
+
+# Flexible date parsing
+# Used for: parsing various date formats in raw data
+python-dateutil>=2.8.0
+
+# Parquet file support (efficient columnar storage)
+# Used for: saving/loading processed datasets
+pyarrow>=12.0.0
+
+
+# ==============================================================================
+# MACHINE LEARNING
+# For model training, evaluation, and utilities
+# ==============================================================================
+
+# Scikit-learn for ML utilities
+# Used for: metrics, cross-validation, preprocessing utilities
+# NOTE: We implement core algorithms from scratch, but use sklearn for utilities
+scikit-learn>=1.3.0
+
+# Sentence-transformers for EC text embedding
+# Used for: semantic similarity between EC descriptions and historical data
+sentence-transformers>=2.2.0
+
+# UMAP for dimensionality reduction (embedding visualization)
+# Used for: visualizing high-dimensional embeddings in 2D
+umap-learn>=0.5.4
+
+
+# ==============================================================================
+# VISUALIZATION
+# For creating plots and figures
+# ==============================================================================
+
+# Matplotlib for static plots
+# Used for: reliability diagrams, ROC curves, coefficient plots
+matplotlib>=3.7.0
+
+# Seaborn for statistical visualizations
+# Used for: heatmaps, distribution plots, pairplots
+seaborn>=0.12.0
+
+# Plotly for interactive plots (optional, for notebooks)
+# Used for: interactive embedding visualizations
+plotly>=5.15.0
+
+
+# ==============================================================================
+# API AND WEB SERVICE
+# For serving predictions via REST API
+# ==============================================================================
+
+# FastAPI web framework
+# Used for: REST API endpoints, request validation
+fastapi>=0.100.0
+
+# Uvicorn ASGI server
+# Used for: running FastAPI in production
+uvicorn[standard]>=0.22.0
+
+# Pydantic for data validation
+# Used for: request/response models, configuration validation
+pydantic>=2.0.0
+
+# Python-multipart for form data
+# Used for: file uploads if needed
+python-multipart>=0.0.6
+
+
+# ==============================================================================
+# DATABASE CLIENTS (Optional)
+# Install these for production deployment with databases
+# ==============================================================================
+
+# MongoDB client
+# Used for: storing application data, prediction logs
+# Uncomment when using MongoDB
+# pymongo>=4.4.0
+
+# Weaviate vector database client
+# Used for: storing and querying embeddings
+# Uncomment when using Weaviate
+# weaviate-client>=3.22.0
+
+
+# ==============================================================================
+# DEVELOPMENT AND TESTING
+# ==============================================================================
+
+# Pytest for testing
+# Used for: unit tests, integration tests
+pytest>=7.4.0
+
+# Pytest coverage plugin
+# Used for: measuring test coverage
+pytest-cov>=4.1.0
+
+# Type checking
+# Used for: static type analysis
+mypy>=1.4.0
+
+# Code formatting
+# Used for: consistent code style
+black>=23.7.0
+
+# Import sorting
+# Used for: organizing imports
+isort>=5.12.0
+
+# Linting
+# Used for: code quality checks
+flake8>=6.1.0
+
+
+# ==============================================================================
+# NOTEBOOK SUPPORT (Optional)
+# Install for Jupyter notebook development
+# ==============================================================================
+
+# Jupyter notebooks
+# Used for: interactive exploration, prototyping
+jupyter>=1.0.0
+jupyterlab>=4.0.0
+
+# IPython widgets for interactivity
+ipywidgets>=8.0.0
+
+
+# ==============================================================================
+#                              VERSION NOTES
+# ==============================================================================
+#
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │                         VERSION COMPATIBILITY                            │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │                                                                          │
+#   │   Python Version: 3.9 - 3.12                                            │
+#   │                                                                          │
+#   │   KEY VERSION CONSTRAINTS:                                               │
+#   │   • numpy < 2.0.0:   Major API changes in numpy 2.0                    │
+#   │   • pydantic >= 2.0: New validation syntax                              │
+#   │   • fastapi >= 0.100: Pydantic v2 support                               │
+#   │                                                                          │
+#   │   KNOWN ISSUES:                                                          │
+#   │   • umap-learn may have dependency conflicts with numba                 │
+#   │   • weaviate-client requires specific grpc versions                     │
+#   │                                                                          │
+#   │   UPGRADE NOTES:                                                         │
+#   │   • Test thoroughly after upgrading major versions                      │
+#   │   • Pin exact versions in production (requirements.lock)               │
+#   │                                                                          │
+#   └─────────────────────────────────────────────────────────────────────────┘
+#
+# ==============================================================================
+
+
+# ==============================================================================
+#                              TODO LIST
+# ==============================================================================
+#
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │                              TODO LIST                                   │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │                                                                          │
+#   │  [ ] Create requirements.lock with exact versions for production       │
+#   │  [ ] Set up virtual environment documentation                          │
+#   │  [ ] Add Docker-specific requirements                                  │
+#   │  [ ] Create requirements-dev.txt for development-only packages         │
+#   │  [ ] Test installation on clean environment                            │
+#   │  [ ] Document any platform-specific dependencies (e.g., BLAS)          │
+#   │                                                                          │
+#   └─────────────────────────────────────────────────────────────────────────┘

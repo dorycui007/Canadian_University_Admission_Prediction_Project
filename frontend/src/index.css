@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+/* ========================================
+   FONTS
+   ======================================== */
+@font-face {
+  font-family: 'Mona Sans';
+  src: url('/fonts/Mona-Sans.woff2') format('woff2');
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Newsreader loaded via Google Fonts in index.html */
+
+/* ========================================
+   THEME (Tailwind v4 CSS-first config)
+   ======================================== */
+@theme {
+  --font-sans: 'Mona Sans', system-ui, -apple-system, sans-serif;
+  --font-serif: 'Newsreader', Georgia, serif;
+
+  --color-emerald-glow: rgba(16, 185, 129, 0.15);
+
+  /* Chart palette */
+  --color-chart-emerald: #10b981;
+  --color-chart-emerald-light: #6ee7b7;
+  --color-chart-red: #f87171;
+  --color-chart-amber: #fbbf24;
+  --color-chart-blue: #60a5fa;
+  --color-chart-purple: #8b5cf6;
+  --color-chart-gray: #6b7280;
+  --color-chart-grid: rgba(255, 255, 255, 0.04);
+  --color-chart-axis: #6b7280;
+  --color-chart-label: #9ca3af;
+}
+
+/* ========================================
+   BASE STYLES
+   ======================================== */
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #050505;
+  color: white;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* ========================================
+   CUSTOM UTILITIES
+   ======================================== */
+.bg-emerald-orb {
+  background: radial-gradient(circle at center, rgba(16, 185, 129, 0.15) 0%, transparent 70%);
+}
+
+.bg-emerald-orb-sm {
+  background: radial-gradient(circle at center, rgba(16, 185, 129, 0.10) 0%, transparent 50%);
+}
+
+/* Glass surface */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1rem;
+  backdrop-filter: blur(12px);
+}
+
+/* Custom scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Focus ring for accessibility */
+*:focus-visible {
+  outline: 2px solid rgb(16, 185, 129);
+  outline-offset: 2px;
+}
+
+/* Accent serif for editorial emphasis */
+.accent-serif {
+  font-family: var(--font-serif);
+  font-style: italic;
+}

@@ -1,0 +1,18 @@
+# Program-specific EC weight tiers
+# high = 0.50, moderate = 0.15, none = 0.0 (default)
+
+high:
+  - "Queen's University|Commerce"
+  - "Queen's University|Health Sciences"
+  - "Western University|Ivey HBA"
+
+moderate:
+  - "University of Waterloo|*Engineering*"
+  - "University of Waterloo|Computer Science"
+  - "University of Waterloo|Mathematics"
+  - "University of Toronto|*Engineering*"
+  - "University of Toronto|Rotman Commerce"
+  - "University of British Columbia|*"
+
+none:
+  - "McGill University|*"

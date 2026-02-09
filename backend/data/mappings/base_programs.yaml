@@ -1,0 +1,830 @@
+# ==============================================================================
+# Base Program Names Canonical Mapping
+# ==============================================================================
+#
+# This file contains the authoritative mapping from base program name variations
+# to their canonical (standardized) names for the University Admission Prediction
+# System.
+#
+# SOURCE: OUInfo Program Categories, OUAC Program Database
+# UPDATED: 2024
+#
+# ==============================================================================
+#                              FILE FORMAT
+# ==============================================================================
+#
+#   Canonical Name:
+#     - variation1
+#     - variation2
+#     - ...
+#
+# All variations are matched CASE-INSENSITIVELY after stripping:
+#   - Degree prefixes (BSc, BA, BEng, etc.)
+#   - Honours designation
+#   - Co-op designation
+#   - Specialization suffixes in parentheses
+#
+# ==============================================================================
+#                           USAGE IN SYSTEM
+# ==============================================================================
+#
+# The ProgramNormalizer first extracts components (degree, honours, co-op,
+# specialization), then uses this file to standardize the base program name.
+#
+# ==============================================================================
+
+
+# ==============================================================================
+#                     COMPUTING & TECHNOLOGY
+# ==============================================================================
+
+Computer Science:
+  - computer science
+  - comp sci
+  - compsci
+  - cs
+  - computing science
+  - computing
+  - computer sciences
+  - comp. sci.
+  - comp. science
+  - csc
+
+Software Engineering:
+  - software engineering
+  - software eng
+  - se
+  - soft eng
+  - software eng.
+  - software development
+  - softeng
+  - soft engineering
+  - génie logiciel
+  - genie logiciel
+  - a. génie logiciel
+  - a. genie logiciel
+
+Computer Engineering:
+  - computer engineering
+  - comp eng
+  - ce
+  - computer eng.
+  - comp. eng.
+
+Electrical Engineering:
+  - electrical engineering
+  - electrical eng
+  - ee
+  - electrical eng.
+  - elec eng
+
+Electrical and Computer Engineering:
+  - electrical and computer engineering
+  - ece
+  - electrical & computer engineering
+  - elec and comp eng
+
+Data Science:
+  - data science
+  - data sciences
+  - data analytics
+
+Information Technology:
+  - information technology
+  - it
+  - info tech
+  - information systems
+
+Cybersecurity:
+  - cybersecurity
+  - cyber security
+  - information security
+  - computer security
+
+
+# ==============================================================================
+#                     ENGINEERING
+# ==============================================================================
+
+Mechanical Engineering:
+  - mechanical engineering
+  - mech eng
+  - mechanical
+  - mech. eng.
+  - mechanical eng.
+  - me
+
+Civil Engineering:
+  - civil engineering
+  - civil eng
+  - civil
+  - civil eng.
+
+Chemical Engineering:
+  - chemical engineering
+  - chem eng
+  - chemical eng.
+  - chem. eng.
+
+Biomedical Engineering:
+  - biomedical engineering
+  - biomed eng
+  - biomedical eng.
+  - bme
+
+Systems Design Engineering:
+  - systems design engineering
+  - systems design
+  - syde
+  - systems eng
+
+Mechatronics Engineering:
+  - mechatronics engineering
+  - mechatronics
+  - mech tronics
+  - mechatronics eng.
+
+Aerospace Engineering:
+  - aerospace engineering
+  - aerospace
+  - aero eng
+  - aerospace eng.
+
+Environmental Engineering:
+  - environmental engineering
+  - environmental eng
+  - env eng
+  - environmental eng.
+
+Engineering:
+  - engineering
+  - eng
+  - general engineering
+
+Management Engineering:
+  - management engineering
+  - management eng
+  - mgmt eng
+
+
+# ==============================================================================
+#                     BUSINESS & COMMERCE
+# ==============================================================================
+
+Business Administration:
+  - business administration
+  - business admin
+  - business
+  - bba program
+  - general business
+  - schulich
+
+Commerce:
+  - commerce
+  - bcomm
+  - commercial studies
+  - commerce program
+  - rotman
+  - rotman uoft
+
+Accounting:
+  - accounting
+  - accountancy
+  - acct
+  - professional accounting
+
+Accounting and Financial Management:
+  - accounting and financial management
+  - afm
+  - accounting & financial management
+  - acct and fin mgmt
+
+Finance:
+  - finance
+  - financial management
+  - corporate finance
+
+Marketing:
+  - marketing
+  - marketing management
+  - mkt
+
+Management:
+  - management
+  - mgmt
+  - managment
+  - business management
+
+International Business:
+  - international business
+  - international commerce
+  - global business
+  - intl business
+
+Economics:
+  - economics
+  - econ
+  - economic studies
+
+
+# ==============================================================================
+#                     MATHEMATICS & STATISTICS
+# ==============================================================================
+
+Mathematics:
+  - mathematics
+  - math
+  - maths
+  - pure mathematics
+  - applied mathematics
+
+Statistics:
+  - statistics
+  - stats
+  - statistical science
+
+Actuarial Science:
+  - actuarial science
+  - actuarial studies
+  - actuarial mathematics
+  - actuarial and financial mathematics
+  - actuarial and financial mathmatics
+
+Mathematical Physics:
+  - mathematical physics
+  - math physics
+
+Operations Research:
+  - operations research
+  - operations management
+  - or
+
+
+# ==============================================================================
+#                     LIFE SCIENCES
+# ==============================================================================
+
+Life Sciences:
+  - life sciences
+  - life science
+  - biological sciences
+  - biosciences
+
+Biology:
+  - biology
+  - bio
+  - biological science
+
+Biochemistry:
+  - biochemistry
+  - biochem
+  - biological chemistry
+
+Biomedical Sciences:
+  - biomedical sciences
+  - biomedical science
+  - biomed sci
+  - biomedical
+  - biovetrenery sciences
+  - bioveterinary sciences
+
+Neuroscience:
+  - neuroscience
+  - neuro
+  - neurological science
+
+Microbiology:
+  - microbiology
+  - micro
+  - microbio
+
+Genetics:
+  - genetics
+  - genetic science
+
+Molecular Biology:
+  - molecular biology
+  - molecular bio
+
+Ecology:
+  - ecology
+  - ecological science
+
+
+# ==============================================================================
+#                     HEALTH SCIENCES
+# ==============================================================================
+
+Health Sciences:
+  - health sciences
+  - health science
+  - health studies
+  - bhsc program
+  - health sci
+  - health
+
+Nursing:
+  - nursing
+  - bscn nursing
+  - registered nursing
+  - rn program
+  - nursing science
+
+Kinesiology:
+  - kinesiology
+  - kin
+  - human kinetics
+  - exercise science
+
+Public Health:
+  - public health
+  - population health
+  - community health
+
+Pharmacy:
+  - pharmacy
+  - pharmaceutical sciences
+  - pharmd program
+
+Medical Sciences:
+  - medical sciences
+  - medical science
+  - med sci
+  - med science
+
+
+# ==============================================================================
+#                     PHYSICAL SCIENCES
+# ==============================================================================
+
+Physics:
+  - physics
+  - phys
+  - physical science
+
+Chemistry:
+  - chemistry
+  - chem
+  - chemical science
+
+Astronomy:
+  - astronomy
+  - astro
+  - astrophysics
+
+Earth Sciences:
+  - earth sciences
+  - earth science
+  - geoscience
+  - geology
+
+Environmental Science:
+  - environmental science
+  - env sci
+  - environmental studies
+
+
+# ==============================================================================
+#                     SOCIAL SCIENCES
+# ==============================================================================
+
+Psychology:
+  - psychology
+  - psych
+  - psychological science
+
+Sociology:
+  - sociology
+  - soc
+  - sociological studies
+
+Political Science:
+  - political science
+  - poli sci
+  - politics
+  - government
+
+Anthropology:
+  - anthropology
+  - anthro
+
+Geography:
+  - geography
+  - geo
+  - geographical science
+  - geographic analysis
+
+Criminology:
+  - criminology
+  - criminal justice
+  - crime studies
+
+Social Work:
+  - social work
+  - sw
+  - social welfare
+
+
+# ==============================================================================
+#                     ARTS & HUMANITIES
+# ==============================================================================
+
+English:
+  - english
+  - english literature
+  - eng lit
+
+History:
+  - history
+  - historical studies
+
+Philosophy:
+  - philosophy
+  - phil
+
+Art History:
+  - art history
+  - history of art
+
+Fine Arts:
+  - fine arts
+  - visual arts
+  - studio art
+  - illustration
+  - photography
+
+Music:
+  - music
+  - musical studies
+
+Theatre:
+  - theatre
+  - theater
+  - drama
+  - dramatic arts
+
+Film Studies:
+  - film studies
+  - film
+  - cinema studies
+
+Communications:
+  - communications
+  - communication studies
+  - media studies
+  - performance production
+
+Journalism:
+  - journalism
+  - media journalism
+
+
+# ==============================================================================
+#                     LANGUAGES & LINGUISTICS
+# ==============================================================================
+
+Linguistics:
+  - linguistics
+  - language science
+
+French:
+  - french
+  - french studies
+  - french language
+
+Spanish:
+  - spanish
+  - spanish studies
+
+German:
+  - german
+  - german studies
+
+Chinese:
+  - chinese
+  - chinese studies
+  - mandarin
+
+Japanese:
+  - japanese
+  - japanese studies
+
+
+# ==============================================================================
+#                     EDUCATION
+# ==============================================================================
+
+Education:
+  - education
+  - teaching
+  - teacher education
+  - bed
+  - bachelor of education
+
+Concurrent Education:
+  - concurrent education
+  - concurrent ba/bed
+  - concurrent bsc/bed
+  - concurrent ba bed
+  - concurrent bsc bed
+  - ba/bed
+  - bsc/bed
+  - concurrent bed
+  - con ed
+  - coned
+  - coned (science)
+
+Early Childhood Education:
+  - early childhood education
+  - ece education
+  - child development
+
+Integrated Studies:
+  - integrated studies
+  - general studies
+  - liberal studies
+  - interdisciplinary studies
+  - liberal arts
+
+
+# ==============================================================================
+#                     ARCHITECTURE & DESIGN
+# ==============================================================================
+
+Architecture:
+  - architecture
+  - arch
+  - architectural studies
+
+Urban Planning:
+  - urban planning
+  - city planning
+  - urban studies
+  - burpi
+  - planning environment
+  - cities regions and planning
+
+Interior Design:
+  - interior design
+  - interior architecture
+
+Graphic Design:
+  - graphic design
+  - visual design
+  - design communications
+
+
+# ==============================================================================
+#                     INTERDISCIPLINARY
+# ==============================================================================
+
+Cognitive Science:
+  - cognitive science
+  - cog sci
+  - cognitive studies
+
+Knowledge Integration:
+  - knowledge integration
+  - ki
+  - interdisciplinary studies
+
+Science and Business:
+  - science and business
+  - science & business
+  - scibus
+
+Global Business and Digital Arts:
+  - global business and digital arts
+  - gbda
+  - global business & digital arts
+
+Legal Studies:
+  - legal studies
+  - law studies
+  - pre-law
+  - law & society
+  - law and society
+
+International Relations:
+  - international relations
+  - ir
+  - international studies
+  - global affairs
+  - international development
+  - international development and globalization
+  - international development & globalization
+  - bgins
+  - bachelor of global and international studies
+
+Public Policy:
+  - public policy
+  - policy studies
+  - public administration
+  - papm
+  - public affairs and policy management
+
+
+# ==============================================================================
+#                     UNIVERSITY-SPECIFIC PROGRAMS
+# ==============================================================================
+
+# Western University
+Management and Organizational Studies:
+  - management and organizational studies
+  - bmos
+
+Ivey AEO:
+  - ivey aeo
+  - ivey advanced entry opportunity
+  - ivey advanced entry opportunity (aeo)
+  - ivey hba
+  - western ivey aeo
+  - bmos + ivey
+  - bmos and ivey aeo
+  - western bmos +ivey
+
+# McMaster University
+Integrated Biomedical Engineering:
+  - integrated biomedical engineering
+  - ibiomed
+  - iBioMed
+  - IBioMed
+
+Integrated Science:
+  - integrated science
+  - isci
+  - isci (integrated science)
+  - iSci (Integrated Science)
+
+# Waterloo
+Computing and Financial Management:
+  - computing and financial management
+  - cfm
+  - waterloo cfm
+
+Financial Analysis and Risk Management:
+  - financial analysis and risk management
+  - farm
+  - math/farm
+
+# McMaster gateway programs
+Humanities:
+  - humanities
+  - humanities i
+  - humanities 1
+  - humaniti 1
+  - humanity
+
+Social Sciences:
+  - social sciences
+  - social science
+  - social sciences i
+  - social science 1
+
+Arts and Science:
+  - arts and science
+  - arts and science i
+  - arts & science i
+  - arts & science 1
+  - arts and science |
+
+
+# ==============================================================================
+#                     ADDITIONAL PROGRAMS
+# ==============================================================================
+
+Forensic Science:
+  - forensic science
+  - forensics
+  - forensics & science
+
+Medical Radiation Sciences:
+  - medical radiation sciences
+  - medical radiation
+
+Midwifery:
+  - midwifery
+
+Biopharmaceutical Sciences:
+  - biopharmaceutical sciences
+  - biopharm sci
+
+Paramedicine:
+  - paramedicine
+
+Applied Human Nutrition:
+  - applied human nutrition
+  - nutrition
+
+Zoology:
+  - zoology
+
+Biotechnology:
+  - biotechnology
+  - biotech
+  - b.tech
+  - b.tech.
+
+Child and Youth Studies:
+  - child and youth studies
+  - child and youth care
+  - childhood and youth studies
+  - early childhood studies
+
+Physical and Mathematical Sciences:
+  - physical and mathematical sciences
+  - physical & mathematical sciences
+  - mathematical and physical sciences
+  - physical sciences
+  - studies in mathematical and physical sciences
+  - chemical & physical sciences
+  - chemical & physical sciences gateway
+
+Philosophy, Politics and Economics:
+  - philosophy, politics and economics
+  - ppe
+
+Media Production:
+  - media production
+  - rta media production
+  - rta
+  - rta media
+  - media arts
+  - new media
+  - creative industries
+  - media information and technoculture
+
+Applied Science:
+  - applied science
+  - applied science (engineering)
+
+Recreation and Leisure Studies:
+  - recreation and leisure studies
+  - recreation and sport business
+  - recreation
+  - recreation & leisure
+
+Science and Aviation:
+  - science and aviation
+  - science & aviation
+  - aviation
+
+Bioethics:
+  - bioethics
+  - bioethics and philosophy
+
+Food Science:
+  - food science
+  - food sciences
+  - food and nutrition
+
+Rehabilitation Sciences:
+  - rehabilitation sciences
+  - rehabilitation science
+
+Environmental Studies:
+  - environmental studies
+  - environment and sustainability
+  - environment & sustainability
+  - environment, resources and sustainability
+  - environment resources and sustainability
+
+Human Resources:
+  - human resources
+  - human resources management
+  - hr management
+
+Supply Chain Management:
+  - supply chain management
+  - supply chain
+  - logistics
+
+Classics:
+  - classics
+  - classics & classical studies
+  - classical studies
+  - classics and classical studies
+
+Family Studies and Human Development:
+  - family studies and human development
+  - family studies
+  - family science
+
+Animal Science:
+  - animal science
+  - animal sciences
+  - animal biology
+
+Bioinformatics:
+  - bioinformatics
+  - computational biology
+
+Artificial Intelligence:
+  - artificial intelligence
+  - ai
+  - machine learning
+
+Geomatics:
+  - geomatics
+  - geomatics engineering
+  - geospatial science
