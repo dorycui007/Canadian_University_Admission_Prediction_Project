@@ -301,7 +301,8 @@ def compute_svd(
 
     MAT223 Reference: Section 3.4, 3.6
     """
-    pass
+    U, s, Vh = np.linalg.svd(A, full_matrices=full_matrices)
+    return U, s, Vh.T
 
 
 def singular_values(A: np.ndarray) -> np.ndarray:
@@ -346,7 +347,7 @@ def singular_values(A: np.ndarray) -> np.ndarray:
     ────────────────
     return np.linalg.svd(A, compute_uv=False)
     """
-    pass
+    return np.linalg.svd(A, compute_uv=False)
 
 
 def condition_number(A: np.ndarray) -> float:
@@ -403,7 +404,10 @@ def condition_number(A: np.ndarray) -> float:
     2. if s[-1] < 1e-15: return np.inf  # singular
     3. return s[0] / s[-1]
     """
-    pass
+    s = singular_values(A)
+    if len(s) == 0 or s[-1] < 1e-15:
+        return np.inf
+    return float(s[0] / s[-1])
 
 
 def matrix_rank(A: np.ndarray, tol: Optional[float] = None) -> int:
@@ -462,7 +466,12 @@ def matrix_rank(A: np.ndarray, tol: Optional[float] = None) -> int:
            tol = max(A.shape) * np.finfo(A.dtype).eps * s[0]
     3. return np.sum(s > tol)
     """
-    pass
+    s = singular_values(A)
+    if len(s) == 0:
+        return 0
+    if tol is None:
+        tol = max(A.shape) * np.finfo(A.dtype).eps * s[0]
+    return int(np.sum(s > tol))
 
 
 def low_rank_approximation(
@@ -534,7 +543,14 @@ def low_rank_approximation(
     2. U, s, V = compute_svd(A)
     3. Return (U[:, :k], s[:k], V[:, :k])
     """
-    pass
+    m, n = A.shape
+    max_k = min(m, n)
+    if k < 1 or k > max_k:
+        raise ValueError(
+            f"k must be between 1 and min(m, n)={max_k}, got k={k}"
+        )
+    U, s, V = compute_svd(A, full_matrices=False)
+    return U[:, :k], s[:k], V[:, :k]
 
 
 def reconstruct_from_svd(
@@ -566,7 +582,7 @@ def reconstruct_from_svd(
     ────────────────
     return U @ np.diag(s) @ V.T
     """
-    pass
+    return U @ np.diag(s) @ V.T
 
 
 def approximation_error(
@@ -618,7 +634,13 @@ def approximation_error(
     2. if norm == 'spectral': return s[k] if k < len(s) else 0.0
     3. if norm == 'fro': return np.sqrt(np.sum(s[k:]**2))
     """
-    pass
+    s = singular_values(A)
+    if norm == 'spectral':
+        return float(s[k]) if k < len(s) else 0.0
+    elif norm == 'fro':
+        return float(np.sqrt(np.sum(s[k:] ** 2)))
+    else:
+        raise ValueError(f"Unknown norm: {norm}. Use 'fro' or 'spectral'.")
 
 
 def explained_variance_ratio(A: np.ndarray) -> np.ndarray:
@@ -676,7 +698,9 @@ def explained_variance_ratio(A: np.ndarray) -> np.ndarray:
     2. s_squared = s ** 2
     3. return s_squared / np.sum(s_squared)
     """
-    pass
+    s = singular_values(A)
+    s_squared = s ** 2
+    return s_squared / np.sum(s_squared)
 
 
 def choose_rank(
@@ -728,7 +752,10 @@ def choose_rank(
     3. k = np.searchsorted(cumulative, variance_threshold) + 1
     4. return min(k, len(evr))  # Can't exceed number of singular values
     """
-    pass
+    evr = explained_variance_ratio(A)
+    cumulative = np.cumsum(evr)
+    k = int(np.searchsorted(cumulative, variance_threshold)) + 1
+    return min(k, len(evr))
 
 
 def svd_solve(
@@ -787,7 +814,17 @@ def svd_solve(
     4. s_inv = np.where(s > threshold, 1/s, 0)
     5. return V @ (s_inv[:, np.newaxis] * (U.T @ b))  # Handle broadcasting
     """
-    pass
+    U, s, V = compute_svd(A, full_matrices=False)
+    if rcond is None:
+        rcond = max(A.shape) * np.finfo(A.dtype).eps
+    threshold = rcond * s[0]
+    s_inv = np.where(s > threshold, 1.0 / s, 0.0)
+    # U.T @ b may be 1D or 2D; use broadcasting
+    Utb = U.T @ b
+    if Utb.ndim == 1:
+        return V @ (s_inv * Utb)
+    else:
+        return V @ (s_inv[:, np.newaxis] * Utb)
 
 
 def ridge_via_svd(
@@ -846,7 +883,10 @@ def ridge_via_svd(
 
     MAT223 Reference: Section 3.6
     """
-    pass
+    U, s, V = compute_svd(X, full_matrices=False)
+    shrinkage = s / (s ** 2 + lambda_)
+    Uty = U.T @ y
+    return V @ (shrinkage * Uty)
 
 
 def effective_degrees_of_freedom(
@@ -907,7 +947,8 @@ def effective_degrees_of_freedom(
     s = singular_values(X)
     return np.sum(s**2 / (s**2 + lambda_))
     """
-    pass
+    s = singular_values(X)
+    return float(np.sum(s ** 2 / (s ** 2 + lambda_)))
 
 
 def truncated_svd(
@@ -984,7 +1025,33 @@ def truncated_svd(
     8. U = Q @ U_B
     9. return U[:, :k], s[:k], Vt[:k, :].T
     """
-    pass
+    m, n = A.shape
+    if random_state is not None:
+        rng = np.random.RandomState(random_state)
+    else:
+        rng = np.random.RandomState()
+
+    # Step 1: Random projection
+    Omega = rng.randn(n, k)
+    Y = A @ Omega
+
+    # Step 2: Power iterations for improved accuracy
+    for _ in range(n_iter):
+        Y = A @ (A.T @ Y)
+
+    # Step 3: QR factorization to get orthonormal basis
+    Q, _ = np.linalg.qr(Y)
+
+    # Step 4: Project A onto the low-dimensional subspace
+    B = Q.T @ A
+
+    # Step 5: SVD of the small matrix B
+    U_B, s, Vt = np.linalg.svd(B, full_matrices=False)
+
+    # Step 6: Recover U in the original space
+    U = Q @ U_B
+
+    return U[:, :k], s[:k], Vt[:k, :].T
 
 
 # =============================================================================

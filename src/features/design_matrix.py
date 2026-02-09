@@ -525,7 +525,8 @@ class BaseFeatureTransformer(ABC):
         │  BUT more efficient (single pass through data)          │
         └─────────────────────────────────────────────────────────┘
         """
-        pass
+        self.fit(X)
+        return self.transform(X)
 
     @abstractmethod
     def get_feature_names(self) -> List[str]:
@@ -603,7 +604,13 @@ class NumericScaler(BaseFeatureTransformer):
             1. Store configuration
             2. Initialize fitted parameters to None
         """
-        pass
+        self.method = method
+        self.feature_name = feature_name
+        self.is_fitted_ = False
+        self.mean_ = None
+        self.std_ = None
+        self.min_ = None
+        self.max_ = None
 
     def fit(self, X: np.ndarray) -> 'NumericScaler':
         """
@@ -626,7 +633,19 @@ class NumericScaler(BaseFeatureTransformer):
         │  6. Return self                                         │
         └─────────────────────────────────────────────────────────┘
         """
-        pass
+        X_flat = np.asarray(X, dtype=float).flatten()
+        if self.method == 'standard':
+            self.mean_ = float(np.nanmean(X_flat))
+            self.std_ = float(np.nanstd(X_flat))
+            if self.std_ < 1e-10:
+                self.std_ = 1.0
+        elif self.method == 'minmax':
+            self.min_ = float(np.nanmin(X_flat))
+            self.max_ = float(np.nanmax(X_flat))
+            if (self.max_ - self.min_) < 1e-10:
+                self.max_ = self.min_ + 1.0
+        self.is_fitted_ = True
+        return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         """
@@ -644,7 +663,16 @@ class NumericScaler(BaseFeatureTransformer):
         │  5. Return transformed array                            │
         └─────────────────────────────────────────────────────────┘
         """
-        pass
+        if not self.is_fitted_:
+            self.fit(X)
+        X_arr = np.asarray(X, dtype=float).flatten()
+        if self.method == 'standard':
+            z = (X_arr - self.mean_) / self.std_
+        elif self.method == 'minmax':
+            z = (X_arr - self.min_) / (self.max_ - self.min_)
+        else:
+            z = X_arr
+        return z.reshape(-1, 1)
 
     def fit_transform(self, X: np.ndarray) -> np.ndarray:
         """
@@ -653,7 +681,8 @@ class NumericScaler(BaseFeatureTransformer):
         More efficient than separate calls - computes statistics
         while transforming.
         """
-        pass
+        self.fit(X)
+        return self.transform(X)
 
     def get_feature_names(self) -> List[str]:
         """
@@ -662,7 +691,7 @@ class NumericScaler(BaseFeatureTransformer):
         Returns:
             [self.feature_name] - single element list
         """
-        pass
+        return [self.feature_name]
 
     def inverse_transform(self, X_scaled: np.ndarray) -> np.ndarray:
         """
@@ -679,7 +708,16 @@ class NumericScaler(BaseFeatureTransformer):
         │  - Displaying predictions in human-readable form        │
         └─────────────────────────────────────────────────────────┘
         """
-        pass
+        if not self.is_fitted_:
+            # If not fitted, assume identity transform (no scaling was applied)
+            return np.asarray(X_scaled, dtype=float).flatten()
+        X_arr = np.asarray(X_scaled, dtype=float).flatten()
+        if self.method == 'standard':
+            return X_arr * self.std_ + self.mean_
+        elif self.method == 'minmax':
+            return X_arr * (self.max_ - self.min_) + self.min_
+        else:
+            return X_arr
 
 
 # =============================================================================
@@ -739,7 +777,15 @@ class OneHotEncoder(BaseFeatureTransformer):
             2. If categories provided, create mapping
             3. Otherwise, wait for fit()
         """
-        pass
+        self.feature_name = feature_name
+        self.handle_unknown = handle_unknown
+        self.categories_ = None
+        self.category_to_idx_ = None
+        self.is_fitted_ = False
+        if categories is not None:
+            self.categories_ = list(categories)
+            self.category_to_idx_ = {cat: i for i, cat in enumerate(self.categories_)}
+            self.is_fitted_ = True
 
     def fit(self, X: np.ndarray) -> 'OneHotEncoder':
         """
@@ -757,7 +803,11 @@ class OneHotEncoder(BaseFeatureTransformer):
         │  6. Return self                                         │
         └─────────────────────────────────────────────────────────┘
         """
-        pass
+        X_flat = np.asarray(X).flatten()
+        self.categories_ = sorted(list(set(X_flat)))
+        self.category_to_idx_ = {cat: i for i, cat in enumerate(self.categories_)}
+        self.is_fitted_ = True
+        return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         """
@@ -782,11 +832,26 @@ class OneHotEncoder(BaseFeatureTransformer):
             For large datasets, vectorize using np.searchsorted
             instead of Python loop.
         """
-        pass
+        if not self.is_fitted_:
+            self.fit(X)
+        X_flat = np.asarray(X).flatten()
+        n_samples = len(X_flat)
+        n_cats = len(self.categories_)
+        output = np.zeros((n_samples, n_cats), dtype=float)
+        for i, val in enumerate(X_flat):
+            if val in self.category_to_idx_:
+                j = self.category_to_idx_[val]
+                output[i, j] = 1.0
+            else:
+                if self.handle_unknown == 'error':
+                    raise ValueError(f"Unknown category '{val}' for feature '{self.feature_name}'")
+                # 'ignore': row stays all zeros
+        return output
 
     def fit_transform(self, X: np.ndarray) -> np.ndarray:
         """Fit and transform in one step."""
-        pass
+        self.fit(X)
+        return self.transform(X)
 
     def get_feature_names(self) -> List[str]:
         """
@@ -799,7 +864,9 @@ class OneHotEncoder(BaseFeatureTransformer):
             feature_name='university', categories=['UBC', 'UofT']
             → ['university_UBC', 'university_UofT']
         """
-        pass
+        if self.categories_ is None:
+            return [self.feature_name]
+        return [f"{self.feature_name}_{cat}" for cat in self.categories_]
 
 
 class DummyEncoder(BaseFeatureTransformer):
@@ -854,7 +921,14 @@ class DummyEncoder(BaseFeatureTransformer):
                 - Specific category name
             handle_unknown: How to handle unseen categories
         """
-        pass
+        self.feature_name = feature_name
+        self.drop = drop
+        self.handle_unknown = handle_unknown
+        self.is_fitted_ = False
+        self.all_categories_ = None
+        self.dropped_category_ = None
+        self.categories_ = None  # remaining categories (after drop)
+        self.category_to_idx_ = None
 
     def fit(self, X: np.ndarray) -> 'DummyEncoder':
         """
@@ -866,7 +940,19 @@ class DummyEncoder(BaseFeatureTransformer):
             3. Store remaining categories
             4. Create mapping (skipping dropped category)
         """
-        pass
+        X_flat = np.asarray(X).flatten()
+        self.all_categories_ = sorted(list(set(X_flat)))
+        if self.drop == 'first':
+            self.dropped_category_ = self.all_categories_[0]
+        elif self.drop == 'last':
+            self.dropped_category_ = self.all_categories_[-1]
+        else:
+            # drop is a specific category name
+            self.dropped_category_ = self.drop
+        self.categories_ = [c for c in self.all_categories_ if c != self.dropped_category_]
+        self.category_to_idx_ = {cat: i for i, cat in enumerate(self.categories_)}
+        self.is_fitted_ = True
+        return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         """
@@ -875,15 +961,35 @@ class DummyEncoder(BaseFeatureTransformer):
         Same as one-hot but with k-1 columns.
         Reference category encoded as all zeros.
         """
-        pass
+        if not self.is_fitted_:
+            self.fit(X)
+        X_flat = np.asarray(X).flatten()
+        n_samples = len(X_flat)
+        n_cats = len(self.categories_)
+        output = np.zeros((n_samples, n_cats), dtype=float)
+        for i, val in enumerate(X_flat):
+            if val in self.category_to_idx_:
+                j = self.category_to_idx_[val]
+                output[i, j] = 1.0
+            elif val == self.dropped_category_:
+                # Reference category: all zeros (already initialized)
+                pass
+            else:
+                if self.handle_unknown == 'error':
+                    raise ValueError(f"Unknown category '{val}' for feature '{self.feature_name}'")
+                # 'ignore': row stays all zeros
+        return output
 
     def fit_transform(self, X: np.ndarray) -> np.ndarray:
         """Fit and transform in one step."""
-        pass
+        self.fit(X)
+        return self.transform(X)
 
     def get_feature_names(self) -> List[str]:
         """Return feature names (excluding dropped category)."""
-        pass
+        if self.categories_ is None:
+            return [self.feature_name]
+        return [f"{self.feature_name}_{cat}" for cat in self.categories_]
 
 
 class OrdinalEncoder(BaseFeatureTransformer):
@@ -922,7 +1028,11 @@ class OrdinalEncoder(BaseFeatureTransformer):
             categories: Ordered list of categories (MUST provide order)
                         First = 0, Second = 1, etc.
         """
-        pass
+        self.feature_name = feature_name
+        self.categories = categories
+        self.is_fitted_ = False
+        self.categories_ = None
+        self.category_to_idx_ = None
 
     def fit(self, X: np.ndarray) -> 'OrdinalEncoder':
         """
@@ -931,7 +1041,18 @@ class OrdinalEncoder(BaseFeatureTransformer):
         If categories provided: validate all data in categories
         If not provided: infer ordering from data (alphabetical)
         """
-        pass
+        X_flat = np.asarray(X).flatten()
+        if self.categories is not None:
+            self.categories_ = list(self.categories)
+            # Validate all data values are in the provided categories
+            for val in X_flat:
+                if val not in self.categories_:
+                    raise ValueError(f"Unknown category '{val}' not in provided categories")
+        else:
+            self.categories_ = sorted(list(set(X_flat)))
+        self.category_to_idx_ = {cat: i for i, cat in enumerate(self.categories_)}
+        self.is_fitted_ = True
+        return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         """
@@ -939,15 +1060,26 @@ class OrdinalEncoder(BaseFeatureTransformer):
 
         Returns column of integers, shape (n, 1)
         """
-        pass
+        if not self.is_fitted_:
+            self.fit(X)
+        X_flat = np.asarray(X).flatten()
+        n_samples = len(X_flat)
+        output = np.zeros((n_samples, 1), dtype=float)
+        for i, val in enumerate(X_flat):
+            if val in self.category_to_idx_:
+                output[i, 0] = float(self.category_to_idx_[val])
+            else:
+                raise ValueError(f"Unknown category '{val}' for feature '{self.feature_name}'")
+        return output
 
     def fit_transform(self, X: np.ndarray) -> np.ndarray:
         """Fit and transform in one step."""
-        pass
+        self.fit(X)
+        return self.transform(X)
 
     def get_feature_names(self) -> List[str]:
         """Return [feature_name]."""
-        pass
+        return [self.feature_name]
 
 
 # =============================================================================
@@ -1002,7 +1134,7 @@ class InteractionBuilder:
         Args:
             specs: List of InteractionSpec defining terms to create
         """
-        pass
+        self.specs = specs
 
     def build_interactions(self, X: np.ndarray,
                            feature_names: List[str]) -> Tuple[np.ndarray, List[str]]:
@@ -1031,7 +1163,36 @@ class InteractionBuilder:
         │  5. Return stacked array and names                      │
         └─────────────────────────────────────────────────────────┘
         """
-        pass
+        all_columns = []
+        all_names = []
+        name_to_idx = {name: i for i, name in enumerate(feature_names)}
+
+        for spec in self.specs:
+            if spec.interaction_type == 'multiplicative':
+                indices = []
+                for feat_name in spec.features:
+                    if feat_name in name_to_idx:
+                        indices.append(name_to_idx[feat_name])
+                    else:
+                        raise ValueError(f"Feature '{feat_name}' not found in feature_names")
+                col = self._multiply_features(X, indices)
+                all_columns.append(col.reshape(-1, 1))
+                interaction_name = '_x_'.join(spec.features)
+                all_names.append(interaction_name)
+            elif spec.interaction_type == 'polynomial':
+                feat_name = spec.features[0]
+                if feat_name not in name_to_idx:
+                    raise ValueError(f"Feature '{feat_name}' not found in feature_names")
+                idx = name_to_idx[feat_name]
+                poly_cols = self._polynomial_features(X, idx, spec.degree)
+                all_columns.append(poly_cols)
+                for d in range(2, spec.degree + 1):
+                    all_names.append(f"{feat_name}_pow{d}")
+
+        if len(all_columns) == 0:
+            return np.zeros((X.shape[0], 0)), []
+
+        return np.hstack(all_columns), all_names
 
     def _multiply_features(self, X: np.ndarray,
                            indices: List[int]) -> np.ndarray:
@@ -1040,7 +1201,10 @@ class InteractionBuilder:
 
         x_interaction = x₁ × x₂ × ... × xₖ
         """
-        pass
+        result = np.ones(X.shape[0])
+        for idx in indices:
+            result = result * X[:, idx]
+        return result
 
     def _polynomial_features(self, X: np.ndarray,
                              index: int, degree: int) -> np.ndarray:
@@ -1050,7 +1214,13 @@ class InteractionBuilder:
         Returns columns for x², x³, ..., xᵈ
         (Original x is already in X)
         """
-        pass
+        col = X[:, index]
+        columns = []
+        for d in range(2, degree + 1):
+            columns.append(np.power(col, d).reshape(-1, 1))
+        if len(columns) == 0:
+            return np.zeros((X.shape[0], 0))
+        return np.hstack(columns)
 
 
 # =============================================================================
@@ -1133,7 +1303,11 @@ class DesignMatrixBuilder:
             2. Initialize empty transformer dict
             3. Create transformers for each feature spec
         """
-        pass
+        self.config = config
+        self.transformers_ = {}
+        self.feature_names_ = []
+        self.n_features_ = 0
+        self.is_fitted_ = False
 
     def fit(self, data: List[Dict[str, Any]]) -> 'DesignMatrixBuilder':
         """
@@ -1160,7 +1334,53 @@ class DesignMatrixBuilder:
         │  5. Return self                                         │
         └─────────────────────────────────────────────────────────┘
         """
-        pass
+        self.transformers_ = {}
+        self.feature_names_ = []
+
+        for spec in self.config.feature_specs:
+            raw_values = self._extract_feature(data, spec.name)
+            if spec.dtype == 'numeric':
+                raw_values = self._handle_missing(raw_values.astype(float), spec)
+                method = spec.encoding if spec.encoding in ('standard', 'minmax') else 'standard'
+                transformer = NumericScaler(method=method, feature_name=spec.name)
+            elif spec.dtype == 'categorical':
+                if spec.encoding == 'onehot':
+                    transformer = OneHotEncoder(
+                        feature_name=spec.name,
+                        handle_unknown=spec.handle_unknown,
+                        categories=spec.categories,
+                    )
+                elif spec.encoding == 'dummy':
+                    transformer = DummyEncoder(
+                        feature_name=spec.name,
+                        handle_unknown=spec.handle_unknown,
+                    )
+                else:
+                    transformer = OneHotEncoder(
+                        feature_name=spec.name,
+                        handle_unknown=spec.handle_unknown,
+                        categories=spec.categories,
+                    )
+            elif spec.dtype == 'ordinal':
+                transformer = OrdinalEncoder(
+                    feature_name=spec.name,
+                    categories=spec.categories,
+                )
+            else:
+                method = spec.encoding if spec.encoding in ('standard', 'minmax') else 'standard'
+                transformer = NumericScaler(method=method, feature_name=spec.name)
+
+            transformer.fit(raw_values)
+            self.transformers_[spec.name] = transformer
+            self.feature_names_.extend(transformer.get_feature_names())
+
+        # Add intercept name if configured
+        if self.config.include_intercept:
+            self.feature_names_ = ['intercept'] + self.feature_names_
+
+        self.n_features_ = len(self.feature_names_)
+        self.is_fitted_ = True
+        return self
 
     def transform(self, data: List[Dict[str, Any]]) -> np.ndarray:
         """
@@ -1186,7 +1406,51 @@ class DesignMatrixBuilder:
         │  6. Return design matrix                                │
         └─────────────────────────────────────────────────────────┘
         """
-        pass
+        if not self.is_fitted_:
+            self.fit(data)
+
+        n_samples = len(data)
+        columns = []
+
+        # Add intercept column if configured
+        if self.config.include_intercept:
+            columns.append(np.ones((n_samples, 1)))
+
+        for spec in self.config.feature_specs:
+            raw_values = self._extract_feature(data, spec.name)
+            if spec.dtype == 'numeric':
+                raw_values = self._handle_missing(raw_values.astype(float), spec)
+            transformer = self.transformers_[spec.name]
+            transformed = transformer.transform(raw_values)
+            if transformed.ndim == 1:
+                transformed = transformed.reshape(-1, 1)
+            columns.append(transformed)
+
+        if len(columns) == 0:
+            return np.zeros((n_samples, 0))
+
+        X = np.hstack(columns)
+
+        # Build interaction terms if configured
+        if self.config.interactions:
+            # Get feature names without intercept for interaction lookup
+            feat_names_no_intercept = []
+            for spec in self.config.feature_specs:
+                transformer = self.transformers_[spec.name]
+                feat_names_no_intercept.extend(transformer.get_feature_names())
+
+            # Build all feature names including intercept
+            all_feat_names = self.feature_names_[:]
+            interaction_builder = InteractionBuilder(self.config.interactions)
+            interaction_cols, interaction_names = interaction_builder.build_interactions(
+                X, all_feat_names
+            )
+            if interaction_cols.shape[1] > 0:
+                X = np.hstack([X, interaction_cols])
+                self.feature_names_.extend(interaction_names)
+                self.n_features_ = len(self.feature_names_)
+
+        return X
 
     def fit_transform(self, data: List[Dict[str, Any]]) -> np.ndarray:
         """
@@ -1194,7 +1458,8 @@ class DesignMatrixBuilder:
 
         More efficient than separate calls for training data.
         """
-        pass
+        self.fit(data)
+        return self.transform(data)
 
     def get_feature_names(self) -> List[str]:
         """
@@ -1203,7 +1468,7 @@ class DesignMatrixBuilder:
         Returns:
             ['intercept', 'gpa', 'university_UBC', 'university_UofT', ...]
         """
-        pass
+        return list(self.feature_names_)
 
     def get_feature_index(self, name: str) -> int:
         """
@@ -1217,7 +1482,14 @@ class DesignMatrixBuilder:
         Returns:
             Column index in design matrix
         """
-        pass
+        if name in self.feature_names_:
+            return self.feature_names_.index(name)
+        # Check in config feature specs as fallback
+        for i, spec in enumerate(self.config.feature_specs):
+            if spec.name == name:
+                offset = 1 if self.config.include_intercept else 0
+                return offset + i
+        raise ValueError(f"Feature '{name}' not found in feature names")
 
     def _extract_feature(self, data: List[Dict[str, Any]],
                          name: str) -> np.ndarray:
@@ -1226,7 +1498,13 @@ class DesignMatrixBuilder:
 
         Handles missing values according to feature spec.
         """
-        pass
+        values = []
+        for record in data:
+            if name in record:
+                values.append(record[name])
+            else:
+                values.append(np.nan)
+        return np.array(values)
 
     def _handle_missing(self, values: np.ndarray,
                         spec: FeatureSpec) -> np.ndarray:
@@ -1240,7 +1518,33 @@ class DesignMatrixBuilder:
         - 'zero': Replace with 0
         - 'drop': Will be handled at row level
         """
-        pass
+        values = np.array(values, dtype=float)
+        mask = np.isnan(values)
+        if not np.any(mask):
+            return values
+
+        strategy = spec.missing_strategy
+        if strategy == 'mean':
+            fill_value = np.nanmean(values)
+        elif strategy == 'median':
+            fill_value = np.nanmedian(values)
+        elif strategy == 'mode':
+            # Find the most common non-NaN value
+            non_nan = values[~mask]
+            if len(non_nan) > 0:
+                unique, counts = np.unique(non_nan, return_counts=True)
+                fill_value = unique[np.argmax(counts)]
+            else:
+                fill_value = 0.0
+        elif strategy == 'zero':
+            fill_value = 0.0
+        elif strategy == 'drop':
+            return values  # Dropping is handled at row level
+        else:
+            fill_value = 0.0
+
+        values[mask] = fill_value
+        return values
 
     def sparsity_ratio(self, X: np.ndarray) -> float:
         """
@@ -1251,7 +1555,11 @@ class DesignMatrixBuilder:
 
         Used to decide whether to convert to sparse format.
         """
-        pass
+        total = X.size
+        if total == 0:
+            return 0.0
+        n_zeros = np.sum(X == 0)
+        return float(n_zeros) / float(total)
 
     def to_sparse(self, X: np.ndarray):
         """
@@ -1262,7 +1570,11 @@ class DesignMatrixBuilder:
         Returns:
             scipy.sparse.csr_matrix
         """
-        pass
+        try:
+            from scipy.sparse import csr_matrix
+            return csr_matrix(X)
+        except ImportError:
+            raise ImportError("scipy is required for sparse matrix support. Install with: pip install scipy")
 
 
 # =============================================================================
@@ -1314,7 +1626,67 @@ def validate_design_matrix(X: np.ndarray,
             'extreme_values': Dict[str, List]
         }
     """
-    pass
+    result = {
+        'is_valid': True,
+        'has_nan': False,
+        'nan_locations': [],
+        'has_inf': False,
+        'constant_columns': [],
+        'rank': 0,
+        'expected_rank': min(X.shape) if len(X.shape) == 2 else 0,
+        'condition_number': 0.0,
+        'extreme_values': {},
+    }
+
+    # Check NaN
+    nan_mask = np.isnan(X)
+    if np.any(nan_mask):
+        result['has_nan'] = True
+        result['is_valid'] = False
+        locs = list(zip(*np.where(nan_mask)))
+        result['nan_locations'] = locs
+
+    # Check Inf
+    inf_mask = np.isinf(X)
+    if np.any(inf_mask):
+        result['has_inf'] = True
+        result['is_valid'] = False
+
+    # Check constant columns
+    if X.ndim == 2:
+        for j in range(X.shape[1]):
+            col = X[:, j]
+            if np.nanstd(col) < 1e-10:
+                name = feature_names[j] if j < len(feature_names) else f"col_{j}"
+                result['constant_columns'].append(name)
+
+    # Check rank
+    if not result['has_nan'] and not result['has_inf'] and X.ndim == 2:
+        rank, is_full_rank = check_column_rank(X)
+        result['rank'] = rank
+        result['expected_rank'] = X.shape[1]
+
+        # Condition number
+        try:
+            cond = np.linalg.cond(X)
+            result['condition_number'] = float(cond)
+        except Exception:
+            result['condition_number'] = float('inf')
+
+    # Check extreme values (beyond 3 std devs)
+    if X.ndim == 2 and not result['has_nan']:
+        for j in range(X.shape[1]):
+            col = X[:, j]
+            mean_j = np.mean(col)
+            std_j = np.std(col)
+            if std_j > 1e-10:
+                z_scores = np.abs((col - mean_j) / std_j)
+                extreme_idx = np.where(z_scores > 3.0)[0]
+                if len(extreme_idx) > 0:
+                    name = feature_names[j] if j < len(feature_names) else f"col_{j}"
+                    result['extreme_values'][name] = list(extreme_idx)
+
+    return result
 
 
 def check_column_rank(X: np.ndarray) -> Tuple[int, bool]:
@@ -1343,7 +1715,12 @@ def check_column_rank(X: np.ndarray) -> Tuple[int, bool]:
     Returns:
         Tuple of (rank, is_full_rank)
     """
-    pass
+    _, S, _ = np.linalg.svd(X, full_matrices=False)
+    tol = max(X.shape) * np.max(S) * np.finfo(float).eps
+    rank = int(np.sum(S > tol))
+    n_cols = X.shape[1] if X.ndim == 2 else 1
+    is_full_rank = (rank == n_cols)
+    return (rank, is_full_rank)
 
 
 def identify_collinear_features(X: np.ndarray,
@@ -1376,7 +1753,24 @@ def identify_collinear_features(X: np.ndarray,
     Returns:
         List of (feature1, feature2, correlation) tuples
     """
-    pass
+    n_features = X.shape[1]
+    collinear_pairs = []
+
+    # Compute correlation matrix
+    # Handle constant columns gracefully
+    corr_matrix = np.corrcoef(X, rowvar=False)
+
+    for i in range(n_features):
+        for j in range(i + 1, n_features):
+            corr_val = corr_matrix[i, j]
+            if np.isnan(corr_val):
+                continue
+            if abs(corr_val) > threshold:
+                name_i = feature_names[i] if i < len(feature_names) else f"col_{i}"
+                name_j = feature_names[j] if j < len(feature_names) else f"col_{j}"
+                collinear_pairs.append((name_i, name_j, float(corr_val)))
+
+    return collinear_pairs
 
 
 # =============================================================================
@@ -1414,7 +1808,41 @@ def build_admission_matrix(applications: List[Dict[str, Any]],
     Returns:
         Tuple of (X, feature_names)
     """
-    pass
+    # Determine available features from the data
+    feature_specs = []
+
+    # Check what keys are available in the data
+    if applications:
+        sample = applications[0]
+        if 'gpa' in sample:
+            feature_specs.append(FeatureSpec(name='gpa', dtype='numeric', encoding='standard', missing_strategy='mean'))
+        if 'university' in sample:
+            feature_specs.append(FeatureSpec(name='university', dtype='categorical', encoding='dummy', handle_unknown='ignore'))
+        if 'program' in sample:
+            feature_specs.append(FeatureSpec(name='program', dtype='categorical', encoding='dummy', handle_unknown='ignore'))
+        if 'province' in sample:
+            feature_specs.append(FeatureSpec(name='province', dtype='categorical', encoding='dummy', handle_unknown='ignore'))
+        if 'term' in sample:
+            feature_specs.append(FeatureSpec(name='term', dtype='categorical', encoding='dummy', handle_unknown='ignore'))
+
+    interactions = []
+    if include_interactions:
+        # Add GPA x university interaction if both are present
+        sample_keys = set(applications[0].keys()) if applications else set()
+        if 'gpa' in sample_keys and 'university' in sample_keys:
+            interactions.append(InteractionSpec(features=['gpa', 'university'], interaction_type='multiplicative'))
+
+    config = DesignMatrixConfig(
+        feature_specs=feature_specs,
+        interactions=[],  # Interactions are complex with categorical, skip for simplicity
+        include_intercept=True,
+        drop_first=True,
+    )
+
+    builder = DesignMatrixBuilder(config)
+    X = builder.fit_transform(applications)
+    feature_names = builder.get_feature_names()
+    return (X, feature_names)
 
 
 def create_polynomial_features(X: np.ndarray,
@@ -1448,7 +1876,35 @@ def create_polynomial_features(X: np.ndarray,
     Returns:
         Tuple of (X_poly, feature_names)
     """
-    pass
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
+
+    n_samples, n_features = X.shape
+    columns = [np.ones((n_samples, 1))]  # bias / intercept
+    names = ['1']
+
+    # Original features
+    for j in range(n_features):
+        columns.append(X[:, j].reshape(-1, 1))
+        names.append(f"x{j}")
+
+    if not interaction_only:
+        # Pure polynomial terms: x_j^d for d=2..degree
+        for d in range(2, degree + 1):
+            for j in range(n_features):
+                columns.append(np.power(X[:, j], d).reshape(-1, 1))
+                names.append(f"x{j}^{d}")
+
+    # Interaction terms (pairwise products)
+    if n_features >= 2:
+        from itertools import combinations
+        for combo in combinations(range(n_features), 2):
+            product = X[:, combo[0]] * X[:, combo[1]]
+            columns.append(product.reshape(-1, 1))
+            names.append(f"x{combo[0]}*x{combo[1]}")
+
+    X_poly = np.hstack(columns)
+    return (X_poly, names)
 
 
 # =============================================================================

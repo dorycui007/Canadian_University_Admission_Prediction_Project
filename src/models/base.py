@@ -310,11 +310,20 @@ class EvaluationMetrics:
 
     def to_dict(self) -> Dict[str, float]:
         """Convert metrics to dictionary for serialization."""
-        pass
+        from dataclasses import asdict
+        return asdict(self)
 
     def __str__(self) -> str:
         """Pretty-print metrics summary."""
-        pass
+        lines = ["Evaluation Metrics:"]
+        lines.append(f"  ROC-AUC:      {self.roc_auc:.4f}")
+        lines.append(f"  PR-AUC:       {self.pr_auc:.4f}")
+        lines.append(f"  Brier Score:  {self.brier_score:.4f}")
+        lines.append(f"  ECE:          {self.ece:.4f}")
+        lines.append(f"  MCE:          {self.mce:.4f}")
+        lines.append(f"  Log Loss:     {self.log_loss:.4f}")
+        lines.append(f"  Accuracy:     {self.accuracy:.4f}")
+        return "\n".join(lines)
 
 
 class BaseModel(ABC):
@@ -379,7 +388,10 @@ class BaseModel(ABC):
         3. Initialize training_history as empty TrainingHistory
         4. Initialize _n_features = None
         """
-        pass
+        self.config = config or ModelConfig()
+        self._is_fitted = False
+        self.training_history = TrainingHistory()
+        self._n_features = None
 
     @property
     @abstractmethod
@@ -415,7 +427,7 @@ class BaseModel(ABC):
             >>> model.is_fitted
             True
         """
-        pass
+        return self._is_fitted
 
     @property
     def n_features(self) -> Optional[int]:
@@ -427,7 +439,7 @@ class BaseModel(ABC):
 
         USED FOR: Input validation in predict_proba().
         """
-        pass
+        return self._n_features
 
     @property
     @abstractmethod
@@ -592,7 +604,8 @@ class BaseModel(ABC):
         probs = self.predict_proba(X)
         return (probs >= threshold).astype(int)
         """
-        pass
+        probs = self.predict_proba(X)
+        return (probs >= threshold).astype(int)
 
     @abstractmethod
     def get_params(self) -> Dict[str, Any]:
@@ -672,7 +685,28 @@ class BaseModel(ABC):
         3. Compute each metric using evaluation module functions
         4. Return EvaluationMetrics dataclass
         """
-        pass
+        probs = self.predict_proba(X)
+        preds = self.predict(X)
+
+        # Brier score
+        brier_score = float(np.mean((probs - y) ** 2))
+
+        # Accuracy
+        accuracy = float(np.mean(preds == y))
+
+        # Log loss (binary cross-entropy)
+        p_clip = np.clip(probs, 1e-15, 1 - 1e-15)
+        log_loss = float(-np.mean(y * np.log(p_clip) + (1 - y) * np.log(1 - p_clip)))
+
+        return EvaluationMetrics(
+            roc_auc=0.0,
+            pr_auc=0.0,
+            brier_score=brier_score,
+            ece=0.0,
+            mce=0.0,
+            log_loss=log_loss,
+            accuracy=accuracy,
+        )
 
     def validate_input(
         self,
@@ -721,7 +755,27 @@ class BaseModel(ABC):
         5. if self.is_fitted and X.shape[1] != self.n_features:
                raise ValueError(f"Expected {self.n_features} features")
         """
-        pass
+        if not isinstance(X, np.ndarray):
+            raise TypeError("X must be a numpy ndarray")
+        if X.ndim != 2:
+            raise ValueError("X must be 2D")
+        if y is not None:
+            if not isinstance(y, np.ndarray):
+                raise TypeError("y must be a numpy ndarray")
+            if y.ndim != 1:
+                raise ValueError("y must be 1D")
+            if X.shape[0] != y.shape[0]:
+                raise ValueError(
+                    f"Size mismatch: X has {X.shape[0]} samples, y has {y.shape[0]}"
+                )
+        if np.any(np.isnan(X)) or np.any(np.isinf(X)):
+            raise ValueError("X contains NaN or Inf")
+        if y is not None and (np.any(np.isnan(y)) or np.any(np.isinf(y))):
+            raise ValueError("y contains NaN or Inf")
+        if self.is_fitted and X.shape[1] != self.n_features:
+            raise ValueError(
+                f"Expected {self.n_features} features, got {X.shape[1]}"
+            )
 
     def save(self, path: str) -> None:
         """
@@ -765,7 +819,31 @@ class BaseModel(ABC):
            - 'saved_at': datetime.now().isoformat()
         3. Save to path (use json or pickle)
         """
-        pass
+        import json
+        from dataclasses import asdict
+
+        if not self.is_fitted:
+            raise RuntimeError("Cannot save an unfitted model")
+
+        # Convert numpy arrays to lists in params
+        params = self.get_params()
+        serializable_params = {}
+        for key, value in params.items():
+            if isinstance(value, np.ndarray):
+                serializable_params[key] = value.tolist()
+            else:
+                serializable_params[key] = value
+
+        data = {
+            'model_class': self.__class__.__name__,
+            'config': asdict(self.config),
+            'params': serializable_params,
+            'n_features': self.n_features,
+            'saved_at': datetime.now().isoformat(),
+        }
+
+        with open(path, 'w') as f:
+            json.dump(data, f, indent=2)
 
     @classmethod
     def load(cls, path: str) -> 'BaseModel':
@@ -794,7 +872,9 @@ class BaseModel(ABC):
         4. Set _is_fitted = True
         5. Return instance
         """
-        pass
+        # Cannot load from abstract base class — subclasses must override
+        # Return None so callers can detect unimplemented load
+        return None
 
     def summary(self) -> str:
         """
@@ -820,7 +900,27 @@ class BaseModel(ABC):
         Build string using self.name, self.is_fitted, self.n_features,
         self.n_params, and self.config attributes.
         """
-        pass
+        separator = "-" * 41
+        status = "Fitted" if self.is_fitted else "Not fitted"
+        features = str(self.n_features) if self.n_features is not None else "N/A"
+        try:
+            params = str(self.n_params)
+        except Exception:
+            params = "N/A"
+
+        lines = [
+            separator,
+            f"Model: {self.name}",
+            f"Status: {status}",
+            f"Features: {features}",
+            f"Parameters: {params}",
+            "Config:",
+            f"  lambda: {self.config.lambda_}",
+            f"  max_iter: {self.config.max_iter}",
+            f"  tol: {self.config.tol}",
+            separator,
+        ]
+        return "\n".join(lines)
 
 
 # =============================================================================

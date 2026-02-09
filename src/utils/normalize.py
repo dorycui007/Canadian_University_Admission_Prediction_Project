@@ -223,7 +223,7 @@ class NormalizationStats:
         Returns:
             Sum of matched, fuzzy, and invalid counts
         """
-        pass
+        return self.matched + self.fuzzy + self.invalid
 
     @property
     def match_rate(self) -> float:
@@ -245,7 +245,9 @@ class NormalizationStats:
         Returns:
             Match rate as percentage (0-100)
         """
-        pass
+        if self.total == 0:
+            return 0.0
+        return (self.matched + self.fuzzy) / self.total * 100
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -254,7 +256,16 @@ class NormalizationStats:
         Returns:
             Dictionary containing all statistics and unique invalid values
         """
-        pass
+        return {
+            'total': self.total,
+            'matched': self.matched,
+            'exact_matches': self.matched,
+            'fuzzy': self.fuzzy,
+            'fuzzy_matches': self.fuzzy,
+            'invalid': self.invalid,
+            'match_rate': self.match_rate,
+            'invalid_values': list(set(self.invalid_values)),
+        }
 
 
 @dataclass
@@ -329,7 +340,29 @@ class ProgramComponents:
         Returns:
             Normalized program string in standardized format
         """
-        pass
+        parts = []
+        # Base name with optional specialization
+        base = self.base_name
+        if self.specialization:
+            base = f"{base} ({self.specialization})"
+        parts.append(base)
+
+        # Degree with optional Honours
+        degree_part = ""
+        if self.degree:
+            degree_part = self.degree
+            if self.honours:
+                degree_part += " Honours"
+        elif self.honours:
+            degree_part = "Honours"
+        if degree_part:
+            parts.append(degree_part)
+
+        # Co-op
+        if self.coop:
+            parts.append("Co-op")
+
+        return " | ".join(parts)
 
     def to_key(self) -> str:
         """
@@ -352,7 +385,11 @@ class ProgramComponents:
         Returns:
             Lowercase key string for clustering
         """
-        pass
+        base_key = self.base_name.lower().replace(" ", "_")
+        degree_key = self.degree.lower() if self.degree else ""
+        honours_key = "honours" if self.honours else ""
+        coop_key = "coop" if self.coop else ""
+        return f"{base_key}|{degree_key}|{honours_key}|{coop_key}"
 
 
 class UniversityNormalizer:
@@ -465,7 +502,10 @@ class UniversityNormalizer:
         3. Build reverse lookup using _build_reverse_lookup()
         4. Initialize stats as NormalizationStats()
         """
-        pass
+        self.fuzzy_threshold = fuzzy_threshold
+        self.mapping = self._load_mapping(mapping_path)
+        self.reverse_lookup = self._build_reverse_lookup()
+        self.stats = NormalizationStats()
 
     def _load_mapping(self, path: str) -> Dict[str, List[str]]:
         """
@@ -504,7 +544,9 @@ class UniversityNormalizer:
         2. Parse YAML using yaml.safe_load()
         3. Return parsed dictionary
         """
-        pass
+        import yaml
+        with open(path, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
 
     def _build_reverse_lookup(self) -> Dict[str, str]:
         """
@@ -545,7 +587,11 @@ class UniversityNormalizer:
               - Map to canonical name
         3. Return lookup dictionary
         """
-        pass
+        lookup = {}
+        for canonical, variations in self.mapping.items():
+            for variation in variations:
+                lookup[variation.strip().lower()] = canonical
+        return lookup
 
     def normalize(self, name: str) -> str:
         """
@@ -619,7 +665,35 @@ class UniversityNormalizer:
         5. If fuzzy match found, return canonical name
         6. Otherwise, record in stats and return "INVALID"
         """
-        pass
+        if not name or not isinstance(name, str):
+            self.stats.invalid += 1
+            self.stats.invalid_values.append(str(name))
+            return "INVALID"
+
+        cleaned = name.strip().lower()
+
+        # Try exact match
+        if cleaned in self.reverse_lookup:
+            self.stats.matched += 1
+            return self.reverse_lookup[cleaned]
+
+        # Try fuzzy match against canonical names
+        from rapidfuzz import process, fuzz
+        result = process.extractOne(
+            cleaned,
+            list(self.mapping.keys()),
+            scorer=fuzz.WRatio,
+            score_cutoff=self.fuzzy_threshold,
+        )
+        if result is not None:
+            canonical, score, idx = result
+            self.stats.fuzzy += 1
+            return canonical
+
+        # No match
+        self.stats.invalid += 1
+        self.stats.invalid_values.append(name)
+        return "INVALID"
 
     def normalize_series(self, series: 'pd.Series') -> 'pd.Series':
         """
@@ -643,7 +717,7 @@ class UniversityNormalizer:
         1. Apply self.normalize to each element
         2. Return resulting Series
         """
-        pass
+        return series.apply(self.normalize)
 
     def get_report(self) -> Dict[str, Any]:
         """
@@ -671,7 +745,7 @@ class UniversityNormalizer:
         ────────────────
         Return self.stats.to_dict()
         """
-        pass
+        return self.stats.to_dict()
 
     def get_canonical_names(self) -> List[str]:
         """
@@ -689,7 +763,7 @@ class UniversityNormalizer:
         ────────────────
         Return list(self.mapping.keys())
         """
-        pass
+        return list(self.mapping.keys())
 
     def get_variations(self, canonical_name: str) -> List[str]:
         """
@@ -709,7 +783,7 @@ class UniversityNormalizer:
         ────────────────
         Return self.mapping.get(canonical_name, [])
         """
-        pass
+        return self.mapping.get(canonical_name, [])
 
 
 class ProgramNormalizer:
@@ -879,7 +953,13 @@ class ProgramNormalizer:
         5. Compile all regex patterns
         6. Initialize stats as NormalizationStats()
         """
-        pass
+        self.fuzzy_threshold = fuzzy_threshold
+        self.base_mapping = self._load_mapping(base_mapping_path)
+        if degree_mapping_path:
+            self._degree_data = self._load_mapping(degree_mapping_path)
+        self.reverse_lookup = self._build_reverse_lookup()
+        self.compiled_patterns = self._compile_patterns()
+        self.stats = NormalizationStats()
 
     def _load_mapping(self, path: str) -> Dict[str, List[str]]:
         """
@@ -901,7 +981,9 @@ class ProgramNormalizer:
         2. Parse YAML using yaml.safe_load()
         3. Return parsed dictionary
         """
-        pass
+        import yaml
+        with open(path, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
 
     def _build_reverse_lookup(self) -> Dict[str, str]:
         """
@@ -914,7 +996,11 @@ class ProgramNormalizer:
         ─────────────────────
         Same as UniversityNormalizer._build_reverse_lookup()
         """
-        pass
+        lookup = {}
+        for canonical, variations in self.base_mapping.items():
+            for variation in variations:
+                lookup[variation.strip().lower()] = canonical
+        return lookup
 
     def _compile_patterns(self) -> Dict[str, re.Pattern]:
         """
@@ -931,7 +1017,13 @@ class ProgramNormalizer:
         4. Compile SPECIALIZATION_PATTERN
         5. Return dictionary of compiled patterns
         """
-        pass
+        compiled = {}
+        for degree, pattern in self.DEGREE_PATTERNS.items():
+            compiled[f'degree_{degree}'] = re.compile(pattern, re.IGNORECASE)
+        compiled['coop'] = re.compile(self.COOP_PATTERN)
+        compiled['honours'] = re.compile(self.HONOURS_PATTERN)
+        compiled['specialization'] = re.compile(self.SPECIALIZATION_PATTERN, re.IGNORECASE)
+        return compiled
 
     def extract_components(self, name: str) -> ProgramComponents:
         """
@@ -994,7 +1086,60 @@ class ProgramNormalizer:
         7. Clean remaining string as base_name using _clean_base_name()
         8. Return ProgramComponents with all fields
         """
-        pass
+        if not name or not isinstance(name, str):
+            return ProgramComponents(original=str(name) if name else "", base_name="")
+
+        original = name
+        working = name
+
+        # Extract degree
+        degree = None
+        for deg_abbrev, pattern_str in self.DEGREE_PATTERNS.items():
+            pattern = self.compiled_patterns[f'degree_{deg_abbrev}']
+            match = pattern.search(working)
+            if match:
+                degree = deg_abbrev
+                working = working[:match.start()] + working[match.end():]
+                break
+
+        # Extract co-op
+        coop = False
+        coop_modifier = None
+        coop_match = self.compiled_patterns['coop'].search(working)
+        if coop_match:
+            coop = True
+            if coop_match.group(3):
+                coop_modifier = coop_match.group(3).strip()
+            working = working[:coop_match.start()] + working[coop_match.end():]
+
+        # Extract honours
+        honours = False
+        honours_match = self.compiled_patterns['honours'].search(working)
+        if honours_match:
+            honours = True
+            working = working[:honours_match.start()] + working[honours_match.end():]
+
+        # Extract specialization
+        specialization = None
+        spec_match = self.compiled_patterns['specialization'].search(working)
+        if spec_match:
+            specialization = spec_match.group(1) or spec_match.group(2)
+            if specialization:
+                specialization = specialization.strip()
+            working = working[:spec_match.start()] + working[spec_match.end():]
+
+        # Clean base name
+        base_name = self._clean_base_name(working)
+
+        return ProgramComponents(
+            original=original,
+            base_name=base_name,
+            degree=degree,
+            honours=honours,
+            coop=coop,
+            coop_modifier=coop_modifier,
+            specialization=specialization,
+        )
 
     def _clean_base_name(self, name: str) -> str:
         """
@@ -1029,7 +1174,15 @@ class ProgramNormalizer:
         3. Collapse whitespace with regex
         4. Strip and return
         """
-        pass
+        # Remove common degree-related prefixes
+        cleaned = re.sub(r'(?i)^(bachelor of\s+)', '', name)
+        # Replace separators with spaces
+        cleaned = re.sub(r'[-:,]', ' ', cleaned)
+        # Remove empty parentheses
+        cleaned = re.sub(r'\(\s*\)', '', cleaned)
+        # Collapse whitespace
+        cleaned = re.sub(r'\s+', ' ', cleaned)
+        return cleaned.strip()
 
     def _normalize_base_name(self, name: str) -> str:
         """
@@ -1047,7 +1200,30 @@ class ProgramNormalizer:
         2. If not found, try fuzzy match with token_set_ratio
         3. Return canonical name or original
         """
-        pass
+        if not name:
+            return name
+        cleaned = name.strip().lower()
+
+        # Exact match
+        if cleaned in self.reverse_lookup:
+            self.stats.matched += 1
+            return self.reverse_lookup[cleaned]
+
+        # Fuzzy match
+        from rapidfuzz import process, fuzz
+        result = process.extractOne(
+            cleaned,
+            list(self.reverse_lookup.keys()),
+            scorer=fuzz.token_set_ratio,
+            score_cutoff=self.fuzzy_threshold,
+        )
+        if result is not None:
+            match_key, score, idx = result
+            self.stats.fuzzy += 1
+            return self.reverse_lookup[match_key]
+
+        # No match, return original
+        return name
 
     def normalize(self, name: str) -> str:
         """
@@ -1099,7 +1275,9 @@ class ProgramNormalizer:
         4. Update stats
         5. Return normalized string
         """
-        pass
+        components = self.extract_components(name)
+        components.base_name = self._normalize_base_name(components.base_name)
+        return components.to_normalized_string()
 
     def normalize_series(self, series: 'pd.Series') -> 'pd.Series':
         """
@@ -1120,7 +1298,7 @@ class ProgramNormalizer:
         ────────────────
         Return series.apply(self.normalize)
         """
-        pass
+        return series.apply(self.normalize)
 
     def to_key(self, name: str) -> str:
         """
@@ -1143,7 +1321,7 @@ class ProgramNormalizer:
         ────────────────
         Return self.extract_components(name).to_key()
         """
-        pass
+        return self.extract_components(name).to_key()
 
     def get_report(self) -> Dict[str, Any]:
         """
@@ -1156,7 +1334,7 @@ class ProgramNormalizer:
         ────────────────
         Return self.stats.to_dict()
         """
-        pass
+        return self.stats.to_dict()
 
 
 # =============================================================================
@@ -1194,7 +1372,7 @@ def create_university_normalizer(
         >>> normalizer.normalize("UofT")
         'University of Toronto'
     """
-    pass
+    return UniversityNormalizer(mapping_path, fuzzy_threshold=fuzzy_threshold)
 
 
 def create_program_normalizer(
@@ -1231,7 +1409,11 @@ def create_program_normalizer(
         >>> normalizer.normalize("BSc CS Co-op")
         'Computer Science | BSc | Co-op'
     """
-    pass
+    return ProgramNormalizer(
+        base_mapping_path,
+        degree_mapping_path=degree_mapping_path,
+        fuzzy_threshold=fuzzy_threshold,
+    )
 
 
 # =============================================================================

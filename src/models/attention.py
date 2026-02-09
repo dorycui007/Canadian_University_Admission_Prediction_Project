@@ -215,6 +215,8 @@ import numpy as np
 from typing import Dict, Any, Optional, Tuple, List
 from dataclasses import dataclass
 
+from .logistic import sigmoid
+
 # PyTorch imports (for actual implementation)
 # import torch
 # import torch.nn as nn
@@ -274,7 +276,22 @@ def scaled_dot_product_attention(
 
     return output, weights
     """
-    pass
+    d_k = Q.shape[-1]
+
+    # Compute attention scores
+    scores = Q @ np.swapaxes(K, -2, -1) / np.sqrt(d_k)
+
+    # Apply mask if provided
+    if mask is not None:
+        scores = scores + mask  # mask should be 0 or -inf
+
+    # Softmax to get attention weights
+    weights = softmax(scores, axis=-1)
+
+    # Weighted sum of values
+    output = weights @ V
+
+    return output, weights
 
 
 def softmax(x: np.ndarray, axis: int = -1) -> np.ndarray:
@@ -308,7 +325,9 @@ def softmax(x: np.ndarray, axis: int = -1) -> np.ndarray:
     exp_x = np.exp(x - x_max)
     return exp_x / np.sum(exp_x, axis=axis, keepdims=True)
     """
-    pass
+    x_max = np.max(x, axis=axis, keepdims=True)
+    exp_x = np.exp(x - x_max)
+    return exp_x / np.sum(exp_x, axis=axis, keepdims=True)
 
 
 @dataclass
@@ -345,11 +364,23 @@ class AttentionOutput:
             >>> output.top_k_attention(3)
             [('Waterloo CS', 0.35), ('UofT CS', 0.25), ('McGill CS', 0.15)]
         """
-        pass
+        weights = self.attention_weights
+        indices = np.argsort(-weights)[:k]
+        return [
+            (self.key_names[i] if self.key_names else str(i), float(weights[i]))
+            for i in indices
+        ]
 
     def visualize(self) -> str:
         """Generate ASCII visualization of attention weights."""
-        pass
+        items = self.top_k_attention(10)
+        lines = []
+        bar_width = 40
+        for name, weight in items:
+            filled = int(weight * bar_width)
+            bar = "#" * filled + " " * (bar_width - filled)
+            lines.append(f"{name}: [{bar}] {weight:.4f}")
+        return "\n".join(lines)
 
 
 class SelfAttentionLayer:
@@ -400,7 +431,16 @@ class SelfAttentionLayer:
         self.W_v = None
         self.W_o = None
         """
-        pass
+        self.embed_dim = embed_dim
+        self.n_heads = n_heads
+        self.head_dim = embed_dim // n_heads
+        self.dropout = dropout
+
+        # Weights initialized in build()
+        self.W_q = None
+        self.W_k = None
+        self.W_v = None
+        self.W_o = None
 
     def build(self):
         """
@@ -425,7 +465,11 @@ class SelfAttentionLayer:
         self.W_v = np.random.randn(self.embed_dim, self.embed_dim) * scale
         self.W_o = np.random.randn(self.embed_dim, self.embed_dim) * scale
         """
-        pass
+        scale = np.sqrt(2.0 / self.embed_dim)
+        self.W_q = np.random.randn(self.embed_dim, self.embed_dim) * scale
+        self.W_k = np.random.randn(self.embed_dim, self.embed_dim) * scale
+        self.W_v = np.random.randn(self.embed_dim, self.embed_dim) * scale
+        self.W_o = np.random.randn(self.embed_dim, self.embed_dim) * scale
 
     def forward(
         self,
@@ -468,7 +512,32 @@ class SelfAttentionLayer:
             return output, weights
         return output, None
         """
-        pass
+        batch_size, seq_len, _ = x.shape
+
+        # Project to Q, K, V
+        Q = x @ self.W_q
+        K = x @ self.W_k
+        V = x @ self.W_v
+
+        # Reshape for multi-head attention
+        Q = Q.reshape(batch_size, seq_len, self.n_heads, self.head_dim)
+        Q = Q.transpose(0, 2, 1, 3)  # (batch, heads, seq, head_dim)
+        K = K.reshape(batch_size, seq_len, self.n_heads, self.head_dim)
+        K = K.transpose(0, 2, 1, 3)
+        V = V.reshape(batch_size, seq_len, self.n_heads, self.head_dim)
+        V = V.transpose(0, 2, 1, 3)
+
+        # Compute attention
+        output, weights = scaled_dot_product_attention(Q, K, V)
+
+        # Reshape back and project
+        output = output.transpose(0, 2, 1, 3)
+        output = output.reshape(batch_size, seq_len, self.embed_dim)
+        output = output @ self.W_o
+
+        if return_attention:
+            return output, weights
+        return output, None
 
 
 class CrossAttentionLayer:
@@ -497,7 +566,16 @@ class CrossAttentionLayer:
         n_heads: int = 4
     ):
         """Initialize cross-attention layer."""
-        pass
+        self.embed_dim = embed_dim
+        self.n_heads = n_heads
+        self.head_dim = embed_dim // n_heads
+
+        # Xavier initialization
+        scale = np.sqrt(2.0 / embed_dim)
+        self.W_q = np.random.randn(embed_dim, embed_dim) * scale
+        self.W_k = np.random.randn(embed_dim, embed_dim) * scale
+        self.W_v = np.random.randn(embed_dim, embed_dim) * scale
+        self.W_o = np.random.randn(embed_dim, embed_dim) * scale
 
     def forward(
         self,
@@ -518,7 +596,30 @@ class CrossAttentionLayer:
         Returns:
             AttentionOutput with context and weights
         """
-        pass
+        # query shape: (batch, embed_dim)
+        # keys shape: (n_keys, embed_dim)
+        # values shape: (n_keys, embed_dim)
+        d = self.embed_dim
+
+        Q = query @ self.W_q   # (batch, embed_dim)
+        K = keys @ self.W_k    # (n_keys, embed_dim)
+        V = values @ self.W_v  # (n_keys, embed_dim)
+
+        # Compute attention scores: Q @ K.T / sqrt(d)
+        scores = Q @ K.T / np.sqrt(d)  # (batch, n_keys)
+
+        # Softmax to get attention weights
+        weights = softmax(scores, axis=-1)  # (batch, n_keys)
+
+        # Context vector: weighted sum of values
+        context = weights @ V  # (batch, embed_dim)
+
+        # Return AttentionOutput
+        return AttentionOutput(
+            context=context,
+            attention_weights=weights[0] if query.shape[0] == 1 else weights,
+            key_names=key_names,
+        )
 
 
 class AttentionModel:
@@ -571,17 +672,32 @@ class AttentionModel:
             learning_rate: Adam learning rate
             n_epochs: Training epochs
         """
-        pass
+        self.n_universities = n_universities
+        self.n_programs = n_programs
+        self.uni_embed_dim = uni_embed_dim
+        self.prog_embed_dim = prog_embed_dim
+        self.n_heads = n_heads
+        self.lambda_ = lambda_
+        self.learning_rate = learning_rate
+        self.n_epochs = n_epochs
+
+        self._is_fitted = False
+        self.uni_embeddings = None
+        self.prog_embeddings = None
+        self.cross_attention = None
+        self.output_weights = None
+        self.output_bias = None
+        self._attention_patterns = {}
 
     @property
     def name(self) -> str:
         """Model name."""
-        pass
+        return "Attention-Based Admission Model"
 
     @property
     def is_fitted(self) -> bool:
         """Check if model is fitted."""
-        pass
+        return self._is_fitted
 
     def fit(
         self,
@@ -604,7 +720,73 @@ class AttentionModel:
         Returns:
             self
         """
-        pass
+        n_samples = X.shape[0]
+        n_features = X.shape[1]
+
+        # Initialize embeddings (Xavier)
+        uni_scale = np.sqrt(2.0 / self.uni_embed_dim)
+        prog_scale = np.sqrt(2.0 / self.prog_embed_dim)
+        self.uni_embeddings = np.random.randn(
+            self.n_universities + 1, self.uni_embed_dim
+        ) * uni_scale
+        self.prog_embeddings = np.random.randn(
+            self.n_programs + 1, self.prog_embed_dim
+        ) * prog_scale
+
+        # Create cross-attention layer
+        self.cross_attention = CrossAttentionLayer(
+            embed_dim=self.prog_embed_dim,
+            n_heads=self.n_heads,
+        )
+
+        # Input dim = uni_embed_dim + prog_embed_dim + n_features
+        input_dim = self.uni_embed_dim + self.prog_embed_dim + n_features
+        self.output_weights = np.random.randn(input_dim, 1) * 0.01
+        self.output_bias = np.zeros(1)
+
+        # Training loop with simple gradient descent
+        for epoch in range(self.n_epochs):
+            # Forward pass
+            # Clip ids to valid range
+            uni_ids_clipped = np.clip(university_ids, 0, self.n_universities)
+            prog_ids_clipped = np.clip(program_ids, 0, self.n_programs)
+
+            uni_embed = self.uni_embeddings[uni_ids_clipped]  # (n_samples, uni_embed_dim)
+            prog_embed = self.prog_embeddings[prog_ids_clipped]  # (n_samples, prog_embed_dim)
+
+            # Cross-attend program embeddings
+            # For each sample, attend over all program embeddings
+            attn_out = self.cross_attention.forward(
+                query=prog_embed,
+                keys=self.prog_embeddings,
+                values=self.prog_embeddings,
+            )
+            context = attn_out.context  # (n_samples, prog_embed_dim)
+
+            # Concatenate: [uni_embed, context, X]
+            combined = np.concatenate([uni_embed, context, X], axis=1)  # (n_samples, input_dim)
+
+            # Linear + sigmoid
+            logits = combined @ self.output_weights + self.output_bias  # (n_samples, 1)
+            probs = sigmoid(logits.ravel())  # (n_samples,)
+
+            # BCE loss
+            eps = 1e-15
+            probs_clipped = np.clip(probs, eps, 1 - eps)
+
+            # Gradient of BCE w.r.t. logits: (probs - y)
+            grad_logits = (probs - y).reshape(-1, 1)  # (n_samples, 1)
+
+            # Gradient for output_weights: combined.T @ grad_logits / n_samples
+            grad_w = combined.T @ grad_logits / n_samples + self.lambda_ * self.output_weights
+            grad_b = np.mean(grad_logits, axis=0)
+
+            # Update output weights
+            self.output_weights -= self.learning_rate * grad_w
+            self.output_bias -= self.learning_rate * grad_b
+
+        self._is_fitted = True
+        return self
 
     def predict_proba(
         self,
@@ -633,7 +815,69 @@ class AttentionModel:
             >>> for name, weight in attn[0].top_k_attention(3):
             ...     print(f"  {name}: {weight:.2%}")
         """
-        pass
+        if not self._is_fitted:
+            # Initialize embeddings lazily for unfitted model
+            uni_scale = np.sqrt(2.0 / self.uni_embed_dim)
+            prog_scale = np.sqrt(2.0 / self.prog_embed_dim)
+            self.uni_embeddings = np.random.randn(
+                self.n_universities + 1, self.uni_embed_dim
+            ) * uni_scale
+            self.prog_embeddings = np.random.randn(
+                self.n_programs + 1, self.prog_embed_dim
+            ) * prog_scale
+            self.cross_attention = CrossAttentionLayer(
+                embed_dim=self.prog_embed_dim,
+                n_heads=self.n_heads,
+            )
+            n_features = X.shape[1]
+            input_dim = self.uni_embed_dim + self.prog_embed_dim + n_features
+            self.output_weights = np.random.randn(input_dim, 1) * 0.01
+            self.output_bias = np.zeros(1)
+
+        n_samples = X.shape[0]
+
+        # Clip ids to valid range
+        uni_ids_clipped = np.clip(university_ids, 0, self.n_universities)
+        prog_ids_clipped = np.clip(program_ids, 0, self.n_programs)
+
+        # Lookup embeddings
+        uni_embed = self.uni_embeddings[uni_ids_clipped]  # (n_samples, uni_embed_dim)
+        prog_embed = self.prog_embeddings[prog_ids_clipped]  # (n_samples, prog_embed_dim)
+
+        # Cross-attend program embeddings
+        attn_out = self.cross_attention.forward(
+            query=prog_embed,
+            keys=self.prog_embeddings,
+            values=self.prog_embeddings,
+        )
+        context = attn_out.context  # (n_samples, prog_embed_dim)
+
+        # Concatenate: [uni_embed, context, X]
+        combined = np.concatenate([uni_embed, context, X], axis=1)
+
+        # Linear + sigmoid
+        logits = combined @ self.output_weights + self.output_bias
+        probs = sigmoid(logits.ravel())
+
+        # Build attention outputs if requested
+        attn_outputs = None
+        if return_attention:
+            attn_outputs = []
+            weights = attn_out.attention_weights
+            # weights could be 1D (if batch==1) or 2D
+            if weights.ndim == 1:
+                weights = weights.reshape(1, -1)
+            for i in range(n_samples):
+                w = weights[i] if i < weights.shape[0] else weights[0]
+                attn_outputs.append(
+                    AttentionOutput(
+                        context=context[i],
+                        attention_weights=w,
+                        key_names=None,
+                    )
+                )
+
+        return probs, attn_outputs
 
     def explain_prediction(
         self,
@@ -664,7 +908,22 @@ class AttentionModel:
         Returns:
             Dict with explanation components
         """
-        pass
+        # Make a single prediction with attention
+        uni_ids = np.array([hash(university_id) % (self.n_universities + 1)])
+        prog_ids = np.array([hash(program_id) % (self.n_programs + 1)])
+
+        probs, attn_outputs = self.predict_proba(
+            X, uni_ids, prog_ids, return_attention=True
+        )
+
+        explanation = {
+            "probability": float(probs[0]),
+            "university_id": university_id,
+            "program_id": program_id,
+            "attention_weights": attn_outputs[0].attention_weights if attn_outputs else None,
+            "top_programs": attn_outputs[0].top_k_attention(5) if attn_outputs else [],
+        }
+        return explanation
 
     def get_attention_patterns(self) -> Dict[str, np.ndarray]:
         """
@@ -673,15 +932,54 @@ class AttentionModel:
         Returns:
             Dict mapping head_idx → average attention matrix
         """
-        pass
+        return self._attention_patterns
 
     def get_params(self) -> Dict[str, Any]:
         """Get model parameters for serialization."""
-        pass
+        return {
+            "n_universities": self.n_universities,
+            "n_programs": self.n_programs,
+            "uni_embed_dim": self.uni_embed_dim,
+            "prog_embed_dim": self.prog_embed_dim,
+            "n_heads": self.n_heads,
+            "lambda_": self.lambda_,
+            "learning_rate": self.learning_rate,
+            "n_epochs": self.n_epochs,
+            "uni_embeddings": self.uni_embeddings,
+            "prog_embeddings": self.prog_embeddings,
+            "output_weights": self.output_weights,
+            "output_bias": self.output_bias,
+            "is_fitted": self._is_fitted,
+        }
 
     def set_params(self, params: Dict[str, Any]) -> None:
         """Set model parameters from serialization."""
-        pass
+        if "n_universities" in params:
+            self.n_universities = params["n_universities"]
+        if "n_programs" in params:
+            self.n_programs = params["n_programs"]
+        if "uni_embed_dim" in params:
+            self.uni_embed_dim = params["uni_embed_dim"]
+        if "prog_embed_dim" in params:
+            self.prog_embed_dim = params["prog_embed_dim"]
+        if "n_heads" in params:
+            self.n_heads = params["n_heads"]
+        if "lambda_" in params:
+            self.lambda_ = params["lambda_"]
+        if "learning_rate" in params:
+            self.learning_rate = params["learning_rate"]
+        if "n_epochs" in params:
+            self.n_epochs = params["n_epochs"]
+        if "uni_embeddings" in params and params["uni_embeddings"] is not None:
+            self.uni_embeddings = np.array(params["uni_embeddings"])
+        if "prog_embeddings" in params and params["prog_embeddings"] is not None:
+            self.prog_embeddings = np.array(params["prog_embeddings"])
+        if "output_weights" in params and params["output_weights"] is not None:
+            self.output_weights = np.array(params["output_weights"])
+        if "output_bias" in params and params["output_bias"] is not None:
+            self.output_bias = np.array(params["output_bias"])
+        if "is_fitted" in params:
+            self._is_fitted = params["is_fitted"]
 
 
 # =============================================================================

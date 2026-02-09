@@ -11,11 +11,11 @@ MAT223 REFERENCE: Sections 4.1 (Vectors), 4.2 (Dot Product and Projections)
                         SYSTEM ARCHITECTURE CONTEXT
 ================================================================================
 
-    ┌─────────────────────────────────────────────────────────────────────────┐
+    ┌──────────────────────────────────────────────────────────────────────────┐
     │                    WHERE THIS MODULE FITS                                │
-    ├─────────────────────────────────────────────────────────────────────────┤
+    ├──────────────────────────────────────────────────────────────────────────┤
     │                                                                          │
-    │   CSV Data ──► MongoDB ──► [THIS MODULE] ──► Models ──► Predictions     │
+    │   CSV Data ──► MongoDB ──► [THIS MODULE] ──► Models ──► Predictions      │
     │                               vectors.py                                 │
     │                                  │                                       │
     │                                  ▼                                       │
@@ -32,7 +32,7 @@ MAT223 REFERENCE: Sections 4.1 (Vectors), 4.2 (Dot Product and Projections)
     │                    ▼             ▼             ▼                         │
     │              projections.py  matrices.py   models/                       │
     │                                                                          │
-    └─────────────────────────────────────────────────────────────────────────┘
+    └──────────────────────────────────────────────────────────────────────────┘
 
 ================================================================================
                         VECTOR FUNDAMENTALS
@@ -57,18 +57,18 @@ n-dimensional space:
 
     In this project, each student application is a FEATURE VECTOR:
 
-    ┌────────────────────────────────────────────────────────────────────────┐
+    ┌─────────────────────────────────────────────────────────────────────────┐
     │  Student Application Feature Vector                                     │
-    ├────────────────────────────────────────────────────────────────────────┤
+    ├─────────────────────────────────────────────────────────────────────────┤
     │                                                                         │
-    │  x = [ 92.5,  1,  0,  0, ...,  1,  0,  0, ... ]                        │
+    │  x = [ 92.5,  1,  0,  0, ...,  1,  0,  0, ... ]                         │
     │        │      │   │   │        │   │   │                                │
-    │        │      └───┴───┴────────┴───┴───┴──── One-hot encoded           │
-    │        │      is_UofT  is_Waterloo  is_CS  is_Eng  (categorical vars)  │
+    │        │      └───┴───┴────────┴───┴───┴──── One-hot encoded            │
+    │        │      is_UofT  is_Waterloo  is_CS  is_Eng  (categorical vars)   │
     │        │                                                                │
     │        └─ Normalized average (continuous feature)                       │
     │                                                                         │
-    └────────────────────────────────────────────────────────────────────────┘
+    └─────────────────────────────────────────────────────────────────────────┘
 
 ================================================================================
                         DOT PRODUCT: THE CORE OPERATION
@@ -104,7 +104,7 @@ The dot product (inner product) is the fundamental operation in ML:
     ┌─────────────────────────────────────────────────────────────────────────┐
     │  HOW VECTOR OPERATIONS FLOW THROUGH THE SYSTEM                          │
     ├─────────────────────────────────────────────────────────────────────────┤
-    │                                                                          │
+    │                                                                         │
     │  1. FEATURE EXTRACTION (features/encoders.py)                           │
     │     ┌─────────────────────────────────────────────────────────────┐     │
     │     │ Raw: avg=92.5, uni="UofT", prog="CS"                        │     │
@@ -112,21 +112,21 @@ The dot product (inner product) is the fundamental operation in ML:
     │     │                        ▼                                    │     │
     │     │ Vector: [92.5, 1, 0, 0, ..., 1, 0, 0, ...]                  │     │
     │     └─────────────────────────────────────────────────────────────┘     │
-    │                              │                                           │
-    │                              ▼                                           │
+    │                              │                                          │
+    │                              ▼                                          │
     │  2. PREDICTION (models/logistic.py)                                     │
     │     ┌─────────────────────────────────────────────────────────────┐     │
     │     │ logit = dot(x, beta)  ◄── uses vectors.dot()                │     │
     │     │ prob = sigmoid(logit)                                       │     │
     │     └─────────────────────────────────────────────────────────────┘     │
-    │                              │                                           │
-    │                              ▼                                           │
+    │                              │                                          │
+    │                              ▼                                          │
     │  3. SIMILARITY (models/embeddings.py)                                   │
     │     ┌─────────────────────────────────────────────────────────────┐     │
-    │     │ sim = cosine_similarity(embed_a, embed_b)  ◄── uses          │     │
-    │     │                                            vectors.cosine()  │     │
+    │     │ sim = cosine_similarity(embed_a, embed_b)  ◄── uses         │     │
+    │     │                                            vectors.cosine() │     │
     │     └─────────────────────────────────────────────────────────────┘     │
-    │                                                                          │
+    │                                                                         │
     └─────────────────────────────────────────────────────────────────────────┘
 
 ================================================================================
@@ -186,7 +186,7 @@ import math
 Vector = Union[np.ndarray, List[float]]
 
 
-def _ensure_numpy(v: Vector) -> np.ndarray:
+def _ensure_numpy(v: Vector) -> np.ndarray:  # Private Method
     """
     Convert input to numpy array if not already.
 
@@ -209,20 +209,23 @@ def _ensure_numpy(v: Vector) -> np.ndarray:
     • If yes, convert to float dtype with .astype(float)
     • If no, create new array with np.array(v, dtype=float)
     """
-    pass
+    if isinstance(v, np.ndarray):
+        return v.astype(float)
+    else:
+        return np.array(v, dtype=float)
 
 
 def add(x: Vector, y: Vector) -> np.ndarray:
     """
     Add two vectors element-wise.
 
-    ┌─────────────────────────────────────────────────────────────────────────┐
+    ┌──────────────────────────────────────────────────────────────────────────┐
     │  VECTOR ADDITION                                                         │
-    ├─────────────────────────────────────────────────────────────────────────┤
+    ├──────────────────────────────────────────────────────────────────────────┤
     │                                                                          │
-    │      x = [x₁, x₂, ..., xₙ]                                              │
-    │      y = [y₁, y₂, ..., yₙ]                                              │
-    │  x + y = [x₁+y₁, x₂+y₂, ..., xₙ+yₙ]                                     │
+    │      x = [x₁, x₂, ..., xₙ]                                               │
+    │      y = [y₁, y₂, ..., yₙ]                                               │
+    │  x + y = [x₁+y₁, x₂+y₂, ..., xₙ+yₙ]                                      │
     │                                                                          │
     │  VISUAL (2D):                                                            │
     │                     ╱→ x + y                                             │
@@ -234,11 +237,16 @@ def add(x: Vector, y: Vector) -> np.ndarray:
     │                                                                          │
     │  TIP: Vector addition follows the "parallelogram rule"                   │
     │                                                                          │
-    └─────────────────────────────────────────────────────────────────────────┘
+    └──────────────────────────────────────────────────────────────────────────┘
 
     Args:
         x: First vector of shape (n,)
         y: Second vector of shape (n,)
+        ("shape" of a vector refers to its dimensions - specifically how many elements\
+           are inside. shape(n, ) means it is a 1-dimensional array or a flat list)
+        Examples:
+            v1 = np.shape([1, 2, 3])
+            v1.shape => (3, ) because it is a vector in R^3 and has 3 elements in it
 
     Returns:
         Sum vector of shape (n,)
@@ -258,18 +266,28 @@ def add(x: Vector, y: Vector) -> np.ndarray:
 
     MAT223 Reference: Section 4.1 - Vector Addition
     """
-    pass
+    # Ensure both arguments are numpy arrays
+    x = _ensure_numpy(x)
+    y = _ensure_numpy(y)
+
+    # Check if the shape match using .shape()
+    if x.shape != y.shape:
+        raise ValueError(f"Add: Shape mismatch: {x.shape} and {y.shape}")
+
+    # Vector addition
+    # x + y = [x_1 + y_1, x_2 + y_2, x_3 + y_3, ..., x_n + y_n]
+    return x + y  
 
 
 def scale(alpha: float, x: Vector) -> np.ndarray:
     """
     Multiply a vector by a scalar.
 
-    ┌─────────────────────────────────────────────────────────────────────────┐
+    ┌──────────────────────────────────────────────────────────────────────────┐
     │  SCALAR MULTIPLICATION                                                   │
-    ├─────────────────────────────────────────────────────────────────────────┤
+    ├──────────────────────────────────────────────────────────────────────────┤
     │                                                                          │
-    │      αx = [αx₁, αx₂, ..., αxₙ]                                          │
+    │      αx = [αx₁, αx₂, ..., αxₙ]                                           │
     │                                                                          │
     │  VISUAL (2D):                                                            │
     │                                                                          │
@@ -286,7 +304,7 @@ def scale(alpha: float, x: Vector) -> np.ndarray:
     │      ─────────→                                                          │
     │                -x                                                        │
     │                                                                          │
-    └─────────────────────────────────────────────────────────────────────────┘
+    └──────────────────────────────────────────────────────────────────────────┘
 
     Args:
         alpha: Scalar multiplier
@@ -306,24 +324,26 @@ def scale(alpha: float, x: Vector) -> np.ndarray:
 
     MAT223 Reference: Section 4.1 - Scalar Multiplication
     """
-    pass
+    x = _ensure_numpy(x)
+
+    return alpha * x
 
 
 def linear_combination(coeffs: List[float], vectors: List[Vector]) -> np.ndarray:
     """
     Compute a linear combination of vectors.
 
-    ┌─────────────────────────────────────────────────────────────────────────┐
+    ┌──────────────────────────────────────────────────────────────────────────┐
     │  LINEAR COMBINATION                                                      │
-    ├─────────────────────────────────────────────────────────────────────────┤
+    ├──────────────────────────────────────────────────────────────────────────┤
     │                                                                          │
-    │      α₁v₁ + α₂v₂ + ... + αₖvₖ                                           │
+    │      α₁v₁ + α₂v₂ + ... + αₖvₖ                                             │
     │                                                                          │
     │  PROJECT CONNECTION:                                                     │
     │  ────────────────────                                                    │
     │  Model prediction is a linear combination of features:                   │
     │                                                                          │
-    │      ŷ = β₁·(avg) + β₂·(is_UofT) + β₃·(is_Waterloo) + ...              │
+    │      ŷ = β₁·(avg) + β₂·(is_UofT) + β₃·(is_Waterloo) + ...                │
     │        = Σᵢ βᵢxᵢ                                                         │
     │        = x^T β  (dot product form)                                       │
     │                                                                          │
@@ -359,7 +379,19 @@ def linear_combination(coeffs: List[float], vectors: List[Vector]) -> np.ndarray
 
     MAT223 Reference: Section 4.4.1 - Span
     """
-    pass
+    if len(coeffs) != len(vectors):
+        raise ValueError(f"Number of coefficients ({len(coeffs)}) must match number of vectors ({len(vectors)})")
+
+    vecs = [_ensure_numpy(v) for v in vectors]
+
+    for i in range(1, len(vecs)):
+        if vecs[i].shape != vecs[0].shape:
+            raise ValueError(f"All vectors must have the same shape. Vector 0 has shape {vecs[0].shape}, vector {i} has shape {vecs[i].shape}")
+
+    result = np.zeros_like(vecs[0])
+    for c, v in zip(coeffs, vecs):
+        result = result + c * v
+    return result
 
 
 def dot(x: Vector, y: Vector) -> float:
@@ -425,7 +457,15 @@ def dot(x: Vector, y: Vector) -> float:
 
     MAT223 Reference: Section 4.2 - Dot Product
     """
-    pass
+    x = _ensure_numpy(x)
+    y = _ensure_numpy(y)
+
+    if x.shape != y.shape:
+        raise ValueError(f"Dot: Shape mismatch: {x.shape} and {y.shape}")
+    if x.size == 0:
+        raise ValueError("Dot: Cannot compute dot product of empty vectors")
+
+    return float(np.sum(x * y))
 
 
 def norm(x: Vector, p: int = 2) -> float:
@@ -501,7 +541,16 @@ def norm(x: Vector, p: int = 2) -> float:
 
     MAT223 Reference: Section 4.2 - Norms
     """
-    pass
+    x = _ensure_numpy(x)
+
+    if p == 2:
+        return float(np.sqrt(np.sum(x ** 2)))
+    elif p == 1:
+        return float(np.sum(np.abs(x)))
+    elif p == np.inf:
+        return float(np.max(np.abs(x))) if x.size > 0 else 0.0
+    else:
+        return float(np.sum(np.abs(x) ** p) ** (1.0 / p))
 
 
 def distance(x: Vector, y: Vector, p: int = 2) -> float:
@@ -552,7 +601,13 @@ def distance(x: Vector, y: Vector, p: int = 2) -> float:
 
     MAT223 Reference: Section 4.2
     """
-    pass
+    x = _ensure_numpy(x)
+    y = _ensure_numpy(y)
+
+    if x.shape != y.shape:
+        raise ValueError(f"Distance: Shape mismatch: {x.shape} and {y.shape}")
+
+    return norm(x - y, p)
 
 
 def normalize(x: Vector) -> np.ndarray:
@@ -604,7 +659,11 @@ def normalize(x: Vector) -> np.ndarray:
 
     MAT223 Reference: Section 4.2
     """
-    pass
+    x = _ensure_numpy(x)
+    x_norm = norm(x)
+    if x_norm < 1e-10:
+        raise ValueError("Cannot normalize the zero vector")
+    return x / x_norm
 
 
 def angle(x: Vector, y: Vector, in_degrees: bool = False) -> float:
@@ -662,7 +721,22 @@ def angle(x: Vector, y: Vector, in_degrees: bool = False) -> float:
 
     MAT223 Reference: Section 4.2
     """
-    pass
+    x = _ensure_numpy(x)
+    y = _ensure_numpy(y)
+
+    x_norm = norm(x)
+    y_norm = norm(y)
+
+    if x_norm < 1e-10 or y_norm < 1e-10:
+        raise ValueError("Cannot compute angle with zero vector")
+
+    cos_theta = dot(x, y) / (x_norm * y_norm)
+    cos_theta = np.clip(cos_theta, -1.0, 1.0)
+    theta = math.acos(cos_theta)
+
+    if in_degrees:
+        return math.degrees(theta)
+    return theta
 
 
 def cosine_similarity(x: Vector, y: Vector) -> float:
@@ -722,7 +796,16 @@ def cosine_similarity(x: Vector, y: Vector) -> float:
 
     MAT223 Reference: Section 4.2
     """
-    pass
+    x = _ensure_numpy(x)
+    y = _ensure_numpy(y)
+
+    x_norm = norm(x)
+    y_norm = norm(y)
+
+    if x_norm < 1e-10 or y_norm < 1e-10:
+        raise ValueError("Cannot compute cosine similarity with zero vector")
+
+    return dot(x, y) / (x_norm * y_norm)
 
 
 def is_orthogonal(x: Vector, y: Vector, tol: float = 1e-10) -> bool:
@@ -785,7 +868,7 @@ def is_orthogonal(x: Vector, y: Vector, tol: float = 1e-10) -> bool:
 
     MAT223 Reference: Section 4.2, 4.7.1
     """
-    pass
+    return abs(dot(x, y)) < tol
 
 
 def is_unit(x: Vector, tol: float = 1e-10) -> bool:
@@ -809,7 +892,7 @@ def is_unit(x: Vector, tol: float = 1e-10) -> bool:
     ────────────────
     Return abs(norm(x) - 1.0) < tol
     """
-    pass
+    return abs(norm(x) - 1.0) < tol
 
 
 def verify_cauchy_schwarz(x: Vector, y: Vector) -> Tuple[bool, float, float]:
@@ -851,7 +934,10 @@ def verify_cauchy_schwarz(x: Vector, y: Vector) -> Tuple[bool, float, float]:
     3. is_satisfied = dot_abs <= norm_product + 1e-10
     4. Return (is_satisfied, dot_abs, norm_product)
     """
-    pass
+    dot_abs = abs(dot(x, y))
+    norm_product = norm(x) * norm(y)
+    is_satisfied = dot_abs <= norm_product + 1e-10
+    return (is_satisfied, dot_abs, norm_product)
 
 
 # =============================================================================

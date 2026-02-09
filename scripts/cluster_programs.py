@@ -194,7 +194,11 @@ class ClusterMember:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        pass
+        return {
+            "name": self.name,
+            "score": self.score,
+            "frequency": self.frequency,
+        }
 
 
 @dataclass
@@ -236,12 +240,12 @@ class ProgramCluster:
     @property
     def size(self) -> int:
         """Return number of members in cluster."""
-        pass
+        return len(self.members)
 
     @property
     def total_frequency(self) -> int:
         """Return sum of all member frequencies."""
-        pass
+        return sum(m.frequency for m in self.members)
 
     def add_member(self, name: str, score: float, frequency: int = 1) -> None:
         """
@@ -252,11 +256,16 @@ class ProgramCluster:
             score: Similarity score to canonical (0-100)
             frequency: Number of occurrences in dataset
         """
-        pass
+        self.members.append(ClusterMember(name=name, score=score, frequency=frequency))
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        pass
+        return {
+            "id": self.id,
+            "canonical": self.canonical,
+            "members": [m.to_dict() for m in self.members],
+            "count": self.size,
+        }
 
 
 @dataclass
@@ -280,16 +289,26 @@ class ClusteringResult:
     @property
     def cluster_count(self) -> int:
         """Return number of clusters (excluding singletons)."""
-        pass
+        return len(self.clusters)
 
     @property
     def largest_cluster_size(self) -> int:
         """Return size of the largest cluster."""
-        pass
+        if not self.clusters:
+            return 0
+        return max(c.size for c in self.clusters)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        pass
+        return {
+            "clusters": [c.to_dict() for c in self.clusters],
+            "summary": {
+                "total_programs": self.total_programs,
+                "total_clusters": self.cluster_count,
+                "singletons": self.singleton_count,
+                "largest_cluster": self.largest_cluster_size,
+            },
+        }
 
     def to_csv_rows(self) -> List[Dict[str, Any]]:
         """
@@ -299,7 +318,17 @@ class ClusteringResult:
             List of dictionaries with keys:
             cluster_id, canonical_name, variant, similarity_score, frequency
         """
-        pass
+        rows = []
+        for cluster in self.clusters:
+            for member in cluster.members:
+                rows.append({
+                    "cluster_id": cluster.id,
+                    "canonical_name": cluster.canonical,
+                    "variant": member.name,
+                    "similarity_score": member.score,
+                    "frequency": member.frequency,
+                })
+        return rows
 
 
 def parse_args() -> argparse.Namespace:
@@ -329,7 +358,34 @@ def parse_args() -> argparse.Namespace:
     3. Set defaults
     4. Parse and return
     """
-    pass
+    parser = argparse.ArgumentParser(
+        description="Cluster similar program names using RapidFuzz fuzzy matching."
+    )
+    parser.add_argument(
+        "--input", default="data/cleaned/2024_2025_cleaned.csv",
+        help="Path to input CSV with programs"
+    )
+    parser.add_argument(
+        "--output", default="data/review/program_clusters",
+        help="Base path for output files (no extension)"
+    )
+    parser.add_argument(
+        "--threshold", type=int, default=80,
+        help="Fuzzy matching threshold 0-100 (default: 80)"
+    )
+    parser.add_argument(
+        "--min-cluster", type=int, default=2,
+        help="Minimum cluster size to include (default: 2)"
+    )
+    parser.add_argument(
+        "--format", choices=["json", "csv", "both"], default="both",
+        help="Output format (default: both)"
+    )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Show detailed progress"
+    )
+    return parser.parse_args()
 
 
 def load_programs(file_path: str, program_column: Optional[str] = None) -> List[Tuple[str, int]]:
@@ -364,7 +420,34 @@ def load_programs(file_path: str, program_column: Optional[str] = None) -> List[
     3. Get value counts
     4. Return as list of tuples
     """
-    pass
+    import pandas as pd
+
+    try:
+        df = pd.read_csv(file_path, encoding="utf-8")
+    except UnicodeDecodeError:
+        df = pd.read_csv(file_path, encoding="latin-1")
+
+    candidate_columns = [
+        program_column,
+        "program_normalized",
+        "Program",
+        "What program did you apply to?",
+    ]
+
+    col = None
+    for c in candidate_columns:
+        if c is not None and c in df.columns:
+            col = c
+            break
+
+    if col is None:
+        raise ValueError(
+            f"Could not find program column in {file_path}. "
+            f"Columns: {list(df.columns)}"
+        )
+
+    counts = df[col].dropna().value_counts()
+    return [(name, int(freq)) for name, freq in counts.items()]
 
 
 def preprocess_programs(
@@ -404,7 +487,14 @@ def preprocess_programs(
        b. Append to appropriate key group
     3. Return dictionary
     """
-    pass
+    groups: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
+    for name, freq in programs:
+        if normalizer is not None:
+            key = normalizer.to_key(name)
+        else:
+            key = name.strip().lower()
+        groups[key].append((name, freq))
+    return dict(groups)
 
 
 def cluster_programs(
@@ -477,7 +567,54 @@ def cluster_programs(
     4. Count singletons (clusters of size 1)
     5. Return ClusteringResult
     """
-    pass
+    from rapidfuzz import fuzz, process
+
+    program_names = [p[0] for p in programs]
+    freq_map = {p[0]: p[1] for p in programs}
+
+    processed = set()
+    clusters = []
+    cluster_id = 1
+    singleton_count = 0
+
+    for prog in program_names:
+        if prog in processed:
+            continue
+
+        matches = process.extract(
+            prog,
+            program_names,
+            scorer=fuzz.token_set_ratio,
+            score_cutoff=threshold,
+            limit=None,
+        )
+
+        # Filter out already-processed matches
+        unprocessed_matches = [
+            (name, score, idx) for name, score, idx in matches
+            if name not in processed
+        ]
+
+        if not unprocessed_matches:
+            continue
+
+        canonical = select_canonical(unprocessed_matches, freq_map)
+        cluster = ProgramCluster(id=cluster_id, canonical=canonical)
+
+        for match_name, score, _ in unprocessed_matches:
+            cluster.add_member(match_name, score, freq_map.get(match_name, 1))
+            processed.add(match_name)
+
+        if cluster.size == 1:
+            singleton_count += 1
+        clusters.append(cluster)
+        cluster_id += 1
+
+    return ClusteringResult(
+        clusters=clusters,
+        singleton_count=singleton_count,
+        total_programs=len(program_names),
+    )
 
 
 def select_canonical(
@@ -510,7 +647,11 @@ def select_canonical(
     1. Sort matches by (-frequency, -length, name)
     2. Return first element
     """
-    pass
+    sorted_matches = sorted(
+        matches,
+        key=lambda m: (-freq_map.get(m[0], 0), -len(m[0]), m[0])
+    )
+    return sorted_matches[0][0]
 
 
 def save_json(result: ClusteringResult, output_path: str) -> None:
@@ -526,7 +667,10 @@ def save_json(result: ClusteringResult, output_path: str) -> None:
     1. Convert result to dictionary
     2. Write to file with json.dump() and indent=2
     """
-    pass
+    path = Path(output_path).with_suffix(".json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(result.to_dict(), f, indent=2, ensure_ascii=False)
 
 
 def save_csv(result: ClusteringResult, output_path: str) -> None:
@@ -542,7 +686,18 @@ def save_csv(result: ClusteringResult, output_path: str) -> None:
     1. Convert result to CSV rows
     2. Write using pandas DataFrame or csv module
     """
-    pass
+    import csv as csv_mod
+
+    path = Path(output_path).with_suffix(".csv")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = result.to_csv_rows()
+    if not rows:
+        return
+    fieldnames = ["cluster_id", "canonical_name", "variant", "similarity_score", "frequency"]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv_mod.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def print_summary(result: ClusteringResult, verbose: bool = False) -> None:
@@ -575,7 +730,18 @@ def print_summary(result: ClusteringResult, verbose: bool = False) -> None:
     1. Print basic statistics
     2. If verbose, sort clusters by size and print top N
     """
-    pass
+    print("\n=== Program Clustering Summary ===")
+    print(f"Total unique programs: {result.total_programs:,}")
+    print(f"Total clusters: {result.cluster_count:,}")
+    print(f"Singletons: {result.singleton_count:,}")
+    print(f"Largest cluster: {result.largest_cluster_size} members")
+
+    if verbose and result.clusters:
+        sorted_clusters = sorted(result.clusters, key=lambda c: -c.size)
+        top_n = min(10, len(sorted_clusters))
+        print(f"\nTop {top_n} largest clusters:")
+        for i, cluster in enumerate(sorted_clusters[:top_n], 1):
+            print(f"  {i}. \"{cluster.canonical}\" ({cluster.size} variations)")
 
 
 def main() -> int:
@@ -598,7 +764,62 @@ def main() -> int:
     Returns:
         Exit code: 0 for success, 1 for failure
     """
-    pass
+    args = parse_args()
+
+    # Validate input
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print(f"Error: Input file not found: {input_path}")
+        return 1
+
+    # Load programs
+    try:
+        programs = load_programs(str(input_path))
+    except Exception as e:
+        print(f"Error loading programs: {e}")
+        return 1
+
+    if not programs:
+        print("Error: No programs found in input file.")
+        return 1
+
+    if args.verbose:
+        print(f"Loaded {len(programs)} unique programs from {input_path}")
+
+    # Optionally initialize normalizer
+    normalizer = None
+    try:
+        from src.utils.normalize import ProgramNormalizer
+        normalizer = ProgramNormalizer()
+        if args.verbose:
+            print("Using ProgramNormalizer for preprocessing")
+    except (ImportError, Exception):
+        if args.verbose:
+            print("ProgramNormalizer not available, using simple lowercase keys")
+
+    # Run clustering
+    result = cluster_programs(programs, threshold=args.threshold, normalizer=normalizer)
+
+    # Filter by min-cluster size
+    if args.min_cluster > 1:
+        result.clusters = [c for c in result.clusters if c.size >= args.min_cluster]
+
+    # Save results
+    output_path = args.output
+    if args.format in ("json", "both"):
+        save_json(result, output_path)
+        if args.verbose:
+            print(f"Saved JSON: {Path(output_path).with_suffix('.json')}")
+
+    if args.format in ("csv", "both"):
+        save_csv(result, output_path)
+        if args.verbose:
+            print(f"Saved CSV: {Path(output_path).with_suffix('.csv')}")
+
+    # Print summary
+    print_summary(result, verbose=args.verbose)
+
+    return 0
 
 
 # =============================================================================

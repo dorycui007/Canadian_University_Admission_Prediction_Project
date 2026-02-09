@@ -453,7 +453,40 @@ def compute_roc_curve(y_true: np.ndarray,
         - tpr: True positive rates, shape (n_thresholds,)
         - thresholds: Threshold values, shape (n_thresholds,)
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    # Sort by descending probability
+    sorted_indices = np.argsort(-y_prob)
+    y_true_sorted = y_true[sorted_indices]
+    y_prob_sorted = y_prob[sorted_indices]
+
+    # Total positives and negatives
+    P = np.sum(y_true == 1)
+    N = np.sum(y_true == 0)
+
+    # Walk through sorted list accumulating TP and FP
+    tps = np.cumsum(y_true_sorted)
+    fps = np.cumsum(1 - y_true_sorted)
+
+    tpr_vals = tps / P
+    fpr_vals = fps / N
+
+    # Find distinct threshold values (keep last occurrence of each threshold)
+    distinct_indices = np.where(np.diff(y_prob_sorted))[0]
+    # Also include the last index
+    threshold_indices = np.concatenate([distinct_indices, [len(y_prob_sorted) - 1]])
+
+    tpr_vals = tpr_vals[threshold_indices]
+    fpr_vals = fpr_vals[threshold_indices]
+    thresholds = y_prob_sorted[threshold_indices]
+
+    # Prepend (0, 0) start point
+    tpr_vals = np.concatenate([[0.0], tpr_vals])
+    fpr_vals = np.concatenate([[0.0], fpr_vals])
+    thresholds = np.concatenate([[thresholds[0] + 1e-10], thresholds])
+
+    return (fpr_vals, tpr_vals, thresholds)
 
 
 def roc_auc_score(y_true: np.ndarray, y_prob: np.ndarray) -> float:
@@ -489,7 +522,10 @@ def roc_auc_score(y_true: np.ndarray, y_prob: np.ndarray) -> float:
     Returns:
         AUC score in range [0, 1]
     """
-    pass
+    fpr, tpr, _ = compute_roc_curve(y_true, y_prob)
+    # Trapezoidal rule
+    auc = float(np.trapz(tpr, fpr))
+    return auc
 
 
 def roc_auc_confidence_interval(y_true: np.ndarray,
@@ -522,7 +558,35 @@ def roc_auc_confidence_interval(y_true: np.ndarray,
     Returns:
         Tuple of (auc, ci_lower, ci_upper)
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    # Compute the point estimate AUC
+    auc = roc_auc_score(y_true, y_prob)
+
+    # Bootstrap
+    rng = np.random.RandomState(42)
+    n = len(y_true)
+    bootstrap_aucs = []
+
+    for _ in range(n_bootstrap):
+        indices = rng.randint(0, n, size=n)
+        y_true_boot = y_true[indices]
+        y_prob_boot = y_prob[indices]
+
+        # Need at least one positive and one negative
+        if np.sum(y_true_boot == 1) == 0 or np.sum(y_true_boot == 0) == 0:
+            continue
+
+        bootstrap_aucs.append(roc_auc_score(y_true_boot, y_prob_boot))
+
+    bootstrap_aucs = np.array(bootstrap_aucs)
+
+    alpha = 1.0 - confidence_level
+    ci_lower = float(np.percentile(bootstrap_aucs, 100 * alpha / 2))
+    ci_upper = float(np.percentile(bootstrap_aucs, 100 * (1 - alpha / 2)))
+
+    return (auc, ci_lower, ci_upper)
 
 
 def optimal_threshold_roc(y_true: np.ndarray,
@@ -566,7 +630,20 @@ def optimal_threshold_roc(y_true: np.ndarray,
     Returns:
         Optimal threshold value
     """
-    pass
+    fpr, tpr, thresholds = compute_roc_curve(y_true, y_prob)
+
+    if method == 'youden':
+        # Maximize TPR - FPR (Youden's J statistic)
+        j_scores = tpr - fpr
+        best_idx = np.argmax(j_scores)
+    elif method == 'closest':
+        # Minimize distance to (0, 1) -- the perfect corner
+        distances = np.sqrt(fpr ** 2 + (1 - tpr) ** 2)
+        best_idx = np.argmin(distances)
+    else:
+        raise ValueError(f"Unknown method '{method}'. Use 'youden' or 'closest'.")
+
+    return float(thresholds[best_idx])
 
 
 # =============================================================================
@@ -605,7 +682,36 @@ def compute_pr_curve(y_true: np.ndarray,
     Returns:
         Tuple of (precision, recall, thresholds)
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    # Sort by descending probability
+    sorted_indices = np.argsort(-y_prob)
+    y_true_sorted = y_true[sorted_indices]
+    y_prob_sorted = y_prob[sorted_indices]
+
+    P = np.sum(y_true == 1)
+
+    tps = np.cumsum(y_true_sorted)
+    fps = np.cumsum(1 - y_true_sorted)
+
+    precision_vals = tps / (tps + fps)
+    recall_vals = tps / P
+
+    # Find distinct threshold values
+    distinct_indices = np.where(np.diff(y_prob_sorted))[0]
+    threshold_indices = np.concatenate([distinct_indices, [len(y_prob_sorted) - 1]])
+
+    precision_vals = precision_vals[threshold_indices]
+    recall_vals = recall_vals[threshold_indices]
+    thresholds = y_prob_sorted[threshold_indices]
+
+    # Prepend start point: precision=1, recall=0
+    precision_vals = np.concatenate([[1.0], precision_vals])
+    recall_vals = np.concatenate([[0.0], recall_vals])
+    thresholds = np.concatenate([[thresholds[0] + 1e-10], thresholds])
+
+    return (precision_vals, recall_vals, thresholds)
 
 
 def pr_auc_score(y_true: np.ndarray, y_prob: np.ndarray) -> float:
@@ -632,7 +738,13 @@ def pr_auc_score(y_true: np.ndarray, y_prob: np.ndarray) -> float:
     Returns:
         PR-AUC score in range [0, 1]
     """
-    pass
+    precision, recall, _ = compute_pr_curve(y_true, y_prob)
+    # Sort by recall for proper integration
+    sort_idx = np.argsort(recall)
+    recall_sorted = recall[sort_idx]
+    precision_sorted = precision[sort_idx]
+    auc = float(np.trapz(precision_sorted, recall_sorted))
+    return auc
 
 
 def average_precision_score(y_true: np.ndarray, y_prob: np.ndarray) -> float:
@@ -661,7 +773,28 @@ def average_precision_score(y_true: np.ndarray, y_prob: np.ndarray) -> float:
     Returns:
         Average precision score
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    # Sort by descending probability
+    sorted_indices = np.argsort(-y_prob)
+    y_true_sorted = y_true[sorted_indices]
+
+    P = np.sum(y_true == 1)
+
+    tps = np.cumsum(y_true_sorted)
+    fps = np.cumsum(1 - y_true_sorted)
+
+    precision_vals = tps / (tps + fps)
+    recall_vals = tps / P
+
+    # AP = sum((R_n - R_{n-1}) * P_n) over all positions where a positive appears
+    # Prepend recall=0
+    recall_with_zero = np.concatenate([[0.0], recall_vals])
+    delta_recall = np.diff(recall_with_zero)
+
+    ap = float(np.sum(delta_recall * precision_vals))
+    return ap
 
 
 def f1_at_threshold(y_true: np.ndarray,
@@ -684,7 +817,26 @@ def f1_at_threshold(y_true: np.ndarray,
     │  - If TP + FP = 0: Precision undefined → F1 = 0             │
     └─────────────────────────────────────────────────────────────┘
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    y_pred = (y_prob >= threshold).astype(int)
+
+    tp = int(np.sum((y_pred == 1) & (y_true == 1)))
+    fp = int(np.sum((y_pred == 1) & (y_true == 0)))
+    fn = int(np.sum((y_pred == 0) & (y_true == 1)))
+
+    if tp == 0:
+        return 0.0
+
+    precision = tp / (tp + fp)
+    recall = tp / (tp + fn)
+
+    if precision + recall == 0:
+        return 0.0
+
+    f1 = 2.0 * precision * recall / (precision + recall)
+    return float(f1)
 
 
 def optimal_threshold_f1(y_true: np.ndarray,
@@ -700,7 +852,18 @@ def optimal_threshold_f1(y_true: np.ndarray,
     Returns:
         Tuple of (optimal_threshold, max_f1_score)
     """
-    pass
+    # Try many thresholds between 0 and 1
+    thresholds = np.linspace(0.0, 1.0, 1001)
+    best_f1 = -1.0
+    best_threshold = 0.5
+
+    for t in thresholds:
+        f1 = f1_at_threshold(y_true, y_prob, threshold=t)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = t
+
+    return (float(best_threshold), float(best_f1))
 
 
 # =============================================================================
@@ -738,7 +901,36 @@ def compute_lift_curve(y_true: np.ndarray,
     Returns:
         Tuple of (percentiles, lift_values)
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    # Sort descending by probability
+    sorted_indices = np.argsort(-y_prob)
+    y_true_sorted = y_true[sorted_indices]
+
+    n = len(y_true)
+    overall_rate = np.mean(y_true)
+
+    percentiles = []
+    lift_values = []
+
+    bin_size = n // n_bins
+    if bin_size < 1:
+        bin_size = 1
+
+    for i in range(n_bins):
+        end = min((i + 1) * bin_size, n)
+        if end == 0:
+            continue
+        # Cumulative: top (i+1) bins
+        group = y_true_sorted[:end]
+        group_rate = np.mean(group)
+        lift = group_rate / overall_rate if overall_rate > 0 else 0.0
+        pct = end / n * 100
+        percentiles.append(pct)
+        lift_values.append(lift)
+
+    return (np.array(percentiles), np.array(lift_values))
 
 
 def compute_gains_curve(y_true: np.ndarray,
@@ -772,7 +964,33 @@ def compute_gains_curve(y_true: np.ndarray,
     Returns:
         Tuple of (population_percentages, gains)
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    # Sort descending by probability
+    sorted_indices = np.argsort(-y_prob)
+    y_true_sorted = y_true[sorted_indices]
+
+    n = len(y_true)
+    total_positives = np.sum(y_true)
+
+    if total_positives == 0:
+        # No positives at all
+        pop_pcts = np.linspace(1.0 / n_points, 1.0, n_points)
+        gains = np.zeros(n_points)
+        return (pop_pcts, gains)
+
+    cumulative_positives = np.cumsum(y_true_sorted)
+
+    # Sample at n_points evenly spaced fractions of the population
+    indices = np.linspace(1, n, n_points, dtype=int)
+    # Ensure we don't go out of bounds
+    indices = np.clip(indices, 1, n)
+
+    pop_pcts = indices / n
+    gains = cumulative_positives[indices - 1] / total_positives
+
+    return (pop_pcts, gains)
 
 
 def lift_at_percentile(y_true: np.ndarray,
@@ -791,7 +1009,26 @@ def lift_at_percentile(y_true: np.ndarray,
     Returns:
         Lift value (ratio of positive rate in top percentile to overall rate)
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    # Sort descending by probability
+    sorted_indices = np.argsort(-y_prob)
+    y_true_sorted = y_true[sorted_indices]
+
+    n = len(y_true)
+    overall_rate = np.mean(y_true)
+
+    # Take top percentile% of samples
+    k = max(1, int(np.ceil(n * percentile / 100.0)))
+    top_group = y_true_sorted[:k]
+    group_rate = np.mean(top_group)
+
+    if overall_rate == 0:
+        return 0.0
+
+    lift = group_rate / overall_rate
+    return float(lift)
 
 
 # =============================================================================
@@ -819,7 +1056,17 @@ def confusion_matrix_at_threshold(y_true: np.ndarray,
     │  Returns: [[TN, FP], [FN, TP]]                              │
     └─────────────────────────────────────────────────────────────┘
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    y_pred = (y_prob >= threshold).astype(int)
+
+    tp = int(np.sum((y_pred == 1) & (y_true == 1)))
+    fp = int(np.sum((y_pred == 1) & (y_true == 0)))
+    fn = int(np.sum((y_pred == 0) & (y_true == 1)))
+    tn = int(np.sum((y_pred == 0) & (y_true == 0)))
+
+    return np.array([[tn, fp], [fn, tp]])
 
 
 def classification_metrics_at_threshold(y_true: np.ndarray,
@@ -839,7 +1086,33 @@ def classification_metrics_at_threshold(y_true: np.ndarray,
         - 'mcc': Matthews correlation coefficient
         - 'balanced_accuracy': (TPR + TNR) / 2
     """
-    pass
+    cm = confusion_matrix_at_threshold(y_true, y_prob, threshold)
+    tn, fp, fn, tp = cm[0, 0], cm[0, 1], cm[1, 0], cm[1, 1]
+
+    total = tn + fp + fn + tp
+    accuracy = (tp + tn) / total if total > 0 else 0.0
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    f1 = (2 * precision * recall / (precision + recall)
+          if (precision + recall) > 0 else 0.0)
+    balanced_accuracy = (recall + specificity) / 2.0
+
+    # MCC = (TP*TN - FP*FN) / sqrt((TP+FP)(TP+FN)(TN+FP)(TN+FN))
+    denom = np.sqrt(
+        float((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    )
+    mcc = (tp * tn - fp * fn) / denom if denom > 0 else 0.0
+
+    return {
+        'accuracy': float(accuracy),
+        'precision': float(precision),
+        'recall': float(recall),
+        'specificity': float(specificity),
+        'f1': float(f1),
+        'mcc': float(mcc),
+        'balanced_accuracy': float(balanced_accuracy),
+    }
 
 
 # =============================================================================
@@ -874,7 +1147,92 @@ def full_discrimination_analysis(y_true: np.ndarray,
     Returns:
         DiscriminationResult with ROC, PR, and lift results
     """
-    pass
+    if config is None:
+        config = DiscriminationConfig()
+
+    # ROC
+    fpr, tpr, roc_thresholds = compute_roc_curve(y_true, y_prob)
+    auc = roc_auc_score(y_true, y_prob)
+    opt_thresh_roc = optimal_threshold_roc(y_true, y_prob)
+
+    roc_result = ROCResult(
+        fpr=fpr,
+        tpr=tpr,
+        thresholds=roc_thresholds,
+        auc=auc,
+        optimal_threshold=opt_thresh_roc,
+    )
+
+    # PR
+    precision, recall, pr_thresholds = compute_pr_curve(y_true, y_prob)
+    pr_auc = pr_auc_score(y_true, y_prob)
+    ap = average_precision_score(y_true, y_prob)
+    opt_thresh_f1, best_f1 = optimal_threshold_f1(y_true, y_prob)
+
+    # Compute F1 scores at each PR threshold
+    f1_scores = np.array([
+        f1_at_threshold(y_true, y_prob, t) for t in pr_thresholds
+    ])
+
+    pr_result = PRResult(
+        precision=precision,
+        recall=recall,
+        thresholds=pr_thresholds,
+        auc=pr_auc,
+        ap=ap,
+        f1_scores=f1_scores,
+        optimal_threshold=opt_thresh_f1,
+    )
+
+    # Lift
+    n_bins = len(config.lift_percentiles)
+    percentiles_arr, lift_values = compute_lift_curve(y_true, y_prob, n_bins=n_bins)
+    pop_pcts, gains = compute_gains_curve(y_true, y_prob)
+
+    # Captures at each percentile
+    captures = np.array([
+        _capture_at_percentile(y_true, y_prob, p)
+        for p in config.lift_percentiles
+    ])
+
+    lift_result = LiftResult(
+        percentiles=np.array(config.lift_percentiles, dtype=float),
+        lift_values=lift_values,
+        gains=gains,
+        captures=captures,
+    )
+
+    # Summary
+    summary = {
+        'roc_auc': auc,
+        'pr_auc': pr_auc,
+        'average_precision': ap,
+        'optimal_threshold_youden': opt_thresh_roc,
+        'optimal_threshold_f1': opt_thresh_f1,
+        'best_f1': best_f1,
+    }
+
+    return DiscriminationResult(
+        roc=roc_result,
+        pr=pr_result,
+        lift=lift_result,
+        summary=summary,
+    )
+
+
+def _capture_at_percentile(y_true, y_prob, percentile):
+    """Helper: fraction of positives captured in top percentile%."""
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+    sorted_indices = np.argsort(-y_prob)
+    y_true_sorted = y_true[sorted_indices]
+    n = len(y_true)
+    total_pos = np.sum(y_true)
+    if total_pos == 0:
+        return 0.0
+    k = max(1, int(np.ceil(n * percentile / 100.0)))
+    captured = np.sum(y_true_sorted[:k])
+    return float(captured / total_pos)
 
 
 # =============================================================================
@@ -895,7 +1253,20 @@ def compare_discrimination(models: Dict[str, Tuple[np.ndarray, np.ndarray]],
         Dict of model_name → metrics_dict
         metrics_dict contains: roc_auc, pr_auc, lift_10, lift_20, etc.
     """
-    pass
+    if config is None:
+        config = DiscriminationConfig()
+
+    results = {}
+    for name, (y_true, y_prob) in models.items():
+        metrics = {
+            'roc_auc': roc_auc_score(y_true, y_prob),
+            'pr_auc': pr_auc_score(y_true, y_prob),
+        }
+        for p in config.lift_percentiles:
+            metrics[f'lift_{p}'] = lift_at_percentile(y_true, y_prob, p)
+        results[name] = metrics
+
+    return results
 
 
 def compare_roc_curves(models: Dict[str, Tuple[np.ndarray, np.ndarray]]
@@ -909,7 +1280,17 @@ def compare_roc_curves(models: Dict[str, Tuple[np.ndarray, np.ndarray]]
     Returns:
         Dict of model_name → ROCResult
     """
-    pass
+    results = {}
+    for name, (y_true, y_prob) in models.items():
+        fpr, tpr, thresholds = compute_roc_curve(y_true, y_prob)
+        auc = roc_auc_score(y_true, y_prob)
+        results[name] = ROCResult(
+            fpr=fpr,
+            tpr=tpr,
+            thresholds=thresholds,
+            auc=auc,
+        )
+    return results
 
 
 def delong_test(y_true: np.ndarray,
@@ -940,7 +1321,75 @@ def delong_test(y_true: np.ndarray,
     Returns:
         Tuple of (z_statistic, p_value)
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob1 = np.asarray(y_prob1, dtype=float)
+    y_prob2 = np.asarray(y_prob2, dtype=float)
+
+    # Separate positive and negative indices
+    pos_idx = np.where(y_true == 1)[0]
+    neg_idx = np.where(y_true == 0)[0]
+
+    m = len(pos_idx)  # number of positives
+    n = len(neg_idx)  # number of negatives
+
+    # Compute placement values for each model
+    # For positives: V_i = fraction of negatives with score < score_i
+    # For negatives: V_j = fraction of positives with score > score_j
+
+    def placement_values(y_prob):
+        """Compute structural components for DeLong variance."""
+        # For each positive, count fraction of negatives scored lower
+        pos_scores = y_prob[pos_idx]
+        neg_scores = y_prob[neg_idx]
+
+        # V10: for each positive, fraction of negatives with lower score
+        v10 = np.zeros(m)
+        for i in range(m):
+            v10[i] = np.mean(pos_scores[i] > neg_scores) + 0.5 * np.mean(pos_scores[i] == neg_scores)
+
+        # V01: for each negative, fraction of positives with higher score
+        v01 = np.zeros(n)
+        for j in range(n):
+            v01[j] = np.mean(pos_scores > neg_scores[j]) + 0.5 * np.mean(pos_scores == neg_scores[j])
+
+        return v10, v01
+
+    v10_1, v01_1 = placement_values(y_prob1)
+    v10_2, v01_2 = placement_values(y_prob2)
+
+    auc1 = roc_auc_score(y_true, y_prob1)
+    auc2 = roc_auc_score(y_true, y_prob2)
+
+    # Covariance matrix of (AUC1, AUC2)
+    # S10 = cov of placement values among positives
+    # S01 = cov of placement values among negatives
+    s10 = np.cov(v10_1, v10_2)[0, 1] if m > 1 else 0.0
+    s01 = np.cov(v01_1, v01_2)[0, 1] if n > 1 else 0.0
+
+    # Variance of (AUC1 - AUC2)
+    var10_1 = np.var(v10_1, ddof=1) if m > 1 else 0.0
+    var10_2 = np.var(v10_2, ddof=1) if m > 1 else 0.0
+    var01_1 = np.var(v01_1, ddof=1) if n > 1 else 0.0
+    var01_2 = np.var(v01_2, ddof=1) if n > 1 else 0.0
+
+    var_auc_diff = (
+        (var10_1 + var10_2 - 2 * s10) / m +
+        (var01_1 + var01_2 - 2 * s01) / n
+    )
+
+    if var_auc_diff <= 0:
+        # If variance is zero, AUCs are identical
+        return (0.0, 1.0)
+
+    se = np.sqrt(var_auc_diff)
+    z = (auc1 - auc2) / se
+
+    # Two-sided p-value using standard normal CDF
+    # Phi(x) = 0.5 * (1 + erf(x / sqrt(2)))
+    from math import erf, sqrt
+    p_value = 2.0 * (1.0 - 0.5 * (1.0 + erf(abs(z) / sqrt(2.0))))
+
+    return (float(z), float(p_value))
 
 
 # =============================================================================
@@ -979,7 +1428,42 @@ def subgroup_discrimination(y_true: np.ndarray,
     Returns:
         Dict of group → metrics_dict
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+    groups = np.asarray(groups)
+
+    if config is None:
+        config = DiscriminationConfig()
+
+    unique_groups = np.unique(groups)
+    results = {}
+
+    for group in unique_groups:
+        mask = groups == group
+        y_true_g = y_true[mask]
+        y_prob_g = y_prob[mask]
+
+        # Need at least one positive and one negative to compute metrics
+        if np.sum(y_true_g == 1) == 0 or np.sum(y_true_g == 0) == 0:
+            results[group] = {
+                'roc_auc': float('nan'),
+                'pr_auc': float('nan'),
+                'n_samples': int(np.sum(mask)),
+                'n_positive': int(np.sum(y_true_g == 1)),
+                'n_negative': int(np.sum(y_true_g == 0)),
+            }
+            continue
+
+        metrics = {
+            'roc_auc': roc_auc_score(y_true_g, y_prob_g),
+            'pr_auc': pr_auc_score(y_true_g, y_prob_g),
+            'n_samples': int(np.sum(mask)),
+            'n_positive': int(np.sum(y_true_g == 1)),
+            'n_negative': int(np.sum(y_true_g == 0)),
+        }
+        results[group] = metrics
+
+    return results
 
 
 # =============================================================================
@@ -987,7 +1471,7 @@ def subgroup_discrimination(y_true: np.ndarray,
 # =============================================================================
 
 def validate_discrimination_inputs(y_true: np.ndarray,
-                                    y_prob: np.ndarray) -> None:
+                                    y_prob: np.ndarray) -> bool:
     """
     Validate inputs for discrimination functions.
 
@@ -997,8 +1481,45 @@ def validate_discrimination_inputs(y_true: np.ndarray,
         3. y_prob in [0, 1]
         4. At least one positive and one negative case
         5. No NaN values
+
+    Returns:
+        True if inputs are valid.
+
+    Raises:
+        ValueError: If any validation check fails.
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    # Check for NaN values
+    if np.any(np.isnan(y_true)) or np.any(np.isnan(y_prob)):
+        raise ValueError("Inputs contain NaN values.")
+
+    # Same length
+    if len(y_true) != len(y_prob):
+        raise ValueError(
+            f"y_true and y_prob must have the same length, "
+            f"got {len(y_true)} and {len(y_prob)}."
+        )
+
+    # y_true is binary
+    unique_labels = set(np.unique(y_true))
+    if not unique_labels.issubset({0.0, 1.0}):
+        raise ValueError(
+            f"y_true must be binary (0 or 1), got unique values: {unique_labels}."
+        )
+
+    # y_prob in [0, 1]
+    if np.any(y_prob < 0) or np.any(y_prob > 1):
+        raise ValueError("y_prob values must be in [0, 1].")
+
+    # At least one positive and one negative
+    if np.sum(y_true == 1) == 0:
+        raise ValueError("y_true must contain at least one positive case (1).")
+    if np.sum(y_true == 0) == 0:
+        raise ValueError("y_true must contain at least one negative case (0).")
+
+    return True
 
 
 def rank_order_statistics(y_true: np.ndarray,
@@ -1013,7 +1534,41 @@ def rank_order_statistics(y_true: np.ndarray,
         - ties: Fraction of tied pairs
         - somers_d: Somers' D statistic (2 × AUC - 1)
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    pos_idx = np.where(y_true == 1)[0]
+    neg_idx = np.where(y_true == 0)[0]
+
+    pos_scores = y_prob[pos_idx]
+    neg_scores = y_prob[neg_idx]
+
+    concordant = 0
+    discordant = 0
+    tied = 0
+
+    for ps in pos_scores:
+        concordant += int(np.sum(ps > neg_scores))
+        discordant += int(np.sum(ps < neg_scores))
+        tied += int(np.sum(ps == neg_scores))
+
+    total_pairs = len(pos_scores) * len(neg_scores)
+    if total_pairs == 0:
+        return {
+            'concordance': 0.0,
+            'discordance': 0.0,
+            'ties': 0.0,
+            'somers_d': 0.0,
+        }
+
+    auc = roc_auc_score(y_true, y_prob)
+
+    return {
+        'concordance': float(concordant / total_pairs),
+        'discordance': float(discordant / total_pairs),
+        'ties': float(tied / total_pairs),
+        'somers_d': float(2 * auc - 1),
+    }
 
 
 # =============================================================================

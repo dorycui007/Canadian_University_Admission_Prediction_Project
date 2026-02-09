@@ -277,7 +277,13 @@ def _ensure_numpy_matrix(M: Matrix) -> np.ndarray:
     • If no, create with np.array(M, dtype=float)
     • Verify ndim == 2
     """
-    pass
+    if isinstance(M, np.ndarray):
+        M = M.astype(float)
+    else:
+        M = np.array(M, dtype=float)
+    if M.ndim != 2:
+        raise ValueError(f"Expected 2D array, got {M.ndim}D")
+    return M
 
 
 def transpose(A: Matrix) -> np.ndarray:
@@ -320,7 +326,8 @@ def transpose(A: Matrix) -> np.ndarray:
 
     MAT223 Reference: Section 1.4
     """
-    pass
+    A = _ensure_numpy_matrix(A)
+    return A.T
 
 
 def matrix_multiply(A: Matrix, B: Matrix) -> np.ndarray:
@@ -378,7 +385,11 @@ def matrix_multiply(A: Matrix, B: Matrix) -> np.ndarray:
 
     MAT223 Reference: Section 1.4.4
     """
-    pass
+    A = _ensure_numpy_matrix(A)
+    B = _ensure_numpy_matrix(B)
+    if A.shape[1] != B.shape[0]:
+        raise ValueError(f"Matrix multiply: inner dimensions don't match: {A.shape} and {B.shape}")
+    return A @ B
 
 
 def matrix_vector_multiply(A: Matrix, x: np.ndarray) -> np.ndarray:
@@ -436,7 +447,11 @@ def matrix_vector_multiply(A: Matrix, x: np.ndarray) -> np.ndarray:
     1. Validate A.shape[1] == len(x)
     2. Return A @ x
     """
-    pass
+    A = _ensure_numpy_matrix(A)
+    x = np.asarray(x, dtype=float)
+    if A.shape[1] != x.shape[0]:
+        raise ValueError(f"Matrix-vector multiply: dimensions don't match: {A.shape} and {x.shape}")
+    return A @ x
 
 
 def gram_matrix(X: Matrix) -> np.ndarray:
@@ -487,7 +502,8 @@ def gram_matrix(X: Matrix) -> np.ndarray:
     ────────────────
     return X.T @ X
     """
-    pass
+    X = _ensure_numpy_matrix(X)
+    return X.T @ X
 
 
 def compute_rank(A: Matrix, tol: float = 1e-10) -> int:
@@ -548,7 +564,9 @@ def compute_rank(A: Matrix, tol: float = 1e-10) -> int:
 
     MAT223 Reference: Section 1.3.2, 4.6
     """
-    pass
+    A = _ensure_numpy_matrix(A)
+    s = np.linalg.svd(A, compute_uv=False)
+    return int(np.sum(s > tol))
 
 
 def check_full_column_rank(X: Matrix) -> bool:
@@ -573,7 +591,8 @@ def check_full_column_rank(X: Matrix) -> bool:
     ────────────────
     return compute_rank(X) == X.shape[1]
     """
-    pass
+    X = _ensure_numpy_matrix(X)
+    return compute_rank(X) == X.shape[1]
 
 
 def condition_number(A: Matrix) -> float:
@@ -639,7 +658,11 @@ def condition_number(A: Matrix) -> float:
 
     MAT223 Reference: Section 4.6
     """
-    pass
+    A = _ensure_numpy_matrix(A)
+    s = np.linalg.svd(A, compute_uv=False)
+    if s[-1] < 1e-15:
+        return np.inf
+    return float(s[0] / s[-1])
 
 
 def is_symmetric(A: Matrix, tol: float = 1e-10) -> bool:
@@ -663,7 +686,10 @@ def is_symmetric(A: Matrix, tol: float = 1e-10) -> bool:
     1. Check A is square: A.shape[0] == A.shape[1]
     2. Check np.allclose(A, A.T, atol=tol)
     """
-    pass
+    A = _ensure_numpy_matrix(A)
+    if A.shape[0] != A.shape[1]:
+        return False
+    return bool(np.allclose(A, A.T, atol=tol))
 
 
 def is_positive_definite(A: Matrix) -> bool:
@@ -707,7 +733,11 @@ def is_positive_definite(A: Matrix) -> bool:
     2. Compute eigenvalues: np.linalg.eigvalsh(A) (for symmetric matrices)
     3. Return True if all eigenvalues > 0 (or > small tolerance)
     """
-    pass
+    A = _ensure_numpy_matrix(A)
+    if not is_symmetric(A):
+        return False
+    eigenvalues = np.linalg.eigvalsh(A)
+    return bool(np.all(eigenvalues > 0))
 
 
 def diagonal_matrix(diag_elements: np.ndarray) -> np.ndarray:
@@ -748,7 +778,7 @@ def diagonal_matrix(diag_elements: np.ndarray) -> np.ndarray:
     ────────────────
     return np.diag(diag_elements)
     """
-    pass
+    return np.diag(np.asarray(diag_elements, dtype=float))
 
 
 def identity(n: int) -> np.ndarray:
@@ -773,7 +803,7 @@ def identity(n: int) -> np.ndarray:
     ────────────────
     return np.eye(n)
     """
-    pass
+    return np.eye(n)
 
 
 def add_ridge(XtX: Matrix, lambda_: float) -> np.ndarray:
@@ -825,7 +855,11 @@ def add_ridge(XtX: Matrix, lambda_: float) -> np.ndarray:
     2. Get size p from XtX.shape[0]
     3. Return XtX + lambda_ * np.eye(p)
     """
-    pass
+    XtX = _ensure_numpy_matrix(XtX)
+    if lambda_ < 0:
+        raise ValueError(f"lambda_ must be >= 0, got {lambda_}")
+    p = XtX.shape[0]
+    return XtX + lambda_ * np.eye(p)
 
 
 def outer_product(x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -875,7 +909,7 @@ def outer_product(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     ────────────────
     return np.outer(x, y)
     """
-    pass
+    return np.outer(np.asarray(x, dtype=float), np.asarray(y, dtype=float))
 
 
 def trace(A: Matrix) -> float:
@@ -902,7 +936,8 @@ def trace(A: Matrix) -> float:
     ────────────────
     return np.trace(A)
     """
-    pass
+    A = _ensure_numpy_matrix(A)
+    return float(np.trace(A))
 
 
 def frobenius_norm(A: Matrix) -> float:
@@ -938,7 +973,8 @@ def frobenius_norm(A: Matrix) -> float:
     ────────────────
     return np.linalg.norm(A, 'fro')
     """
-    pass
+    A = _ensure_numpy_matrix(A)
+    return float(np.linalg.norm(A, 'fro'))
 
 
 # =============================================================================

@@ -328,7 +328,24 @@ def ridge_solve(
        OR simply: np.linalg.solve(XtX_reg, Xty)
     6. Return beta
     """
-    pass
+    if lambda_ < 0:
+        raise ValueError("lambda_ must be >= 0")
+    if X.shape[0] != y.shape[0]:
+        raise ValueError("X and y must have the same number of rows")
+
+    n, p = X.shape
+    XtX = X.T @ X
+    XtX_reg = XtX + lambda_ * np.eye(p)
+    Xty = X.T @ y
+
+    try:
+        beta = np.linalg.solve(XtX_reg, Xty)
+    except np.linalg.LinAlgError:
+        raise IllConditionedError(
+            "Matrix is singular even with regularization"
+        )
+
+    return beta
 
 
 def ridge_solve_qr(
@@ -391,7 +408,15 @@ def ridge_solve_qr(
     5. beta = np.linalg.solve(R, Q.T @ y_aug)
     6. Return beta
     """
-    pass
+    if lambda_ < 0:
+        raise ValueError("lambda_ must be >= 0")
+
+    n, p = X.shape
+    X_aug = np.vstack([X, np.sqrt(lambda_) * np.eye(p)])
+    y_aug = np.concatenate([y, np.zeros(p)])
+    Q, R = np.linalg.qr(X_aug, mode='reduced')
+    beta = np.linalg.solve(R, Q.T @ y_aug)
+    return beta
 
 
 def weighted_ridge_solve(
@@ -456,7 +481,28 @@ def weighted_ridge_solve(
     6. Compute XtWz = X.T @ (W * z)
     7. Solve and return: np.linalg.solve(XtWX_reg, XtWz)
     """
-    pass
+    if lambda_ < 0:
+        raise ValueError("lambda_ must be >= 0")
+
+    n, p = X.shape
+
+    if X.shape[0] != z.shape[0]:
+        raise ValueError("X and z must have the same number of rows")
+
+    # Handle W: scalar, 1D array, or 2D diagonal matrix
+    if np.isscalar(W):
+        w = float(W) * np.ones(n)
+    elif isinstance(W, np.ndarray) and W.ndim == 2:
+        w = np.diag(W)
+    else:
+        w = np.asarray(W).ravel()
+
+    XtWX = X.T @ (w[:, np.newaxis] * X)
+    XtWX_reg = XtWX + lambda_ * np.eye(p)
+    XtWz = X.T @ (w * z)
+
+    beta = np.linalg.solve(XtWX_reg, XtWz)
+    return beta
 
 
 def ridge_loocv(
@@ -529,7 +575,21 @@ def ridge_loocv(
     shrinkage = s**2 / (s**2 + lambda_)
     h_diag = np.sum((U ** 2) * shrinkage, axis=1)
     """
-    pass
+    n = X.shape[0]
+
+    # Solve ridge to get fitted values
+    beta = ridge_solve(X, y, lambda_)
+    y_hat = X @ beta
+    residuals = y - y_hat
+
+    # Compute leverage via SVD (efficient)
+    U, s, Vt = np.linalg.svd(X, full_matrices=False)
+    shrinkage = s**2 / (s**2 + lambda_)
+    h_diag = np.sum((U ** 2) * shrinkage, axis=1)
+
+    # LOO-CV formula
+    loo_residuals = residuals / (1 - h_diag)
+    return float(np.mean(loo_residuals ** 2))
 
 
 def ridge_cv(
@@ -613,7 +673,29 @@ def ridge_cv(
     5. best_idx = np.argmin(cv_scores)
     6. return lambdas[best_idx], cv_scores
     """
-    pass
+    n = X.shape[0]
+
+    # Create fold indices
+    indices = np.arange(n)
+    np.random.shuffle(indices)
+    folds = np.array_split(indices, cv_folds)
+
+    cv_scores = np.zeros(len(lambdas))
+
+    for i, lam in enumerate(lambdas):
+        fold_scores = []
+        for fold_idx in folds:
+            mask = np.ones(n, dtype=bool)
+            mask[fold_idx] = False
+            X_train, y_train = X[mask], y[mask]
+            X_val, y_val = X[fold_idx], y[fold_idx]
+            beta = ridge_solve(X_train, y_train, lam)
+            mse = np.mean((y_val - X_val @ beta) ** 2)
+            fold_scores.append(mse)
+        cv_scores[i] = np.mean(fold_scores)
+
+    best_idx = np.argmin(cv_scores)
+    return lambdas[best_idx], cv_scores
 
 
 def ridge_path(
@@ -688,7 +770,7 @@ def ridge_path(
     2. d = s / (s**2 + lambda_)  # Shrinkage factors
     3. beta = V.T @ (d * (U.T @ y))
     """
-    pass
+    return np.array([ridge_solve(X, y, lam) for lam in lambdas])
 
 
 def ridge_gcv(
@@ -751,7 +833,17 @@ def ridge_gcv(
     6. gcv = (rss / n) / (1 - df/n)**2
     7. return gcv
     """
-    pass
+    n = X.shape[0]
+    beta = ridge_solve(X, y, lambda_)
+    y_hat = X @ beta
+    rss = np.sum((y - y_hat) ** 2)
+
+    # Compute effective degrees of freedom using SVD
+    s = np.linalg.svd(X, compute_uv=False)
+    df = np.sum(s**2 / (s**2 + lambda_))
+
+    gcv = (rss / n) / (1 - df / n) ** 2
+    return float(gcv)
 
 
 def standardize_features(
@@ -816,7 +908,12 @@ def standardize_features(
     4. X_std = (X - means) / stds
     5. return X_std, means, stds
     """
-    pass
+    p = X.shape[1]
+    means = X.mean(axis=0) if center else np.zeros(p)
+    stds = X.std(axis=0) if scale else np.ones(p)
+    stds = np.where(stds < 1e-10, 1.0, stds)  # Avoid division by zero
+    X_std = (X - means) / stds
+    return X_std, means, stds
 
 
 def ridge_effective_df(
@@ -865,7 +962,8 @@ def ridge_effective_df(
     s = np.linalg.svd(X, compute_uv=False)
     return np.sum(s**2 / (s**2 + lambda_))
     """
-    pass
+    s = np.linalg.svd(X, compute_uv=False)
+    return float(np.sum(s**2 / (s**2 + lambda_)))
 
 
 # =============================================================================

@@ -261,12 +261,19 @@ class EmbeddingConfig:
 
         return cls(n_uni, n_prog, uni_dim, prog_dim)
         """
-        pass
+        n_uni = len(np.unique(university_ids))
+        n_prog = len(np.unique(program_ids))
+
+        # fast.ai formula
+        uni_dim = compute_embedding_dim(n_uni)
+        prog_dim = compute_embedding_dim(n_prog)
+
+        return cls(n_uni, n_prog, uni_dim, prog_dim)
 
     @property
     def total_embed_dim(self) -> int:
         """Total dimension when embeddings are concatenated."""
-        pass
+        return self.uni_embed_dim + self.prog_embed_dim
 
 
 def compute_embedding_dim(n_categories: int) -> int:
@@ -299,7 +306,7 @@ def compute_embedding_dim(n_categories: int) -> int:
     ────────────────
     return min(600, round(1.6 * n_categories ** 0.56))
     """
-    pass
+    return min(600, round(1.6 * n_categories ** 0.56))
 
 
 class CategoryEncoder:
@@ -335,7 +342,11 @@ class CategoryEncoder:
         Args:
             unknown_token: Token to use for unseen categories
         """
-        pass
+        self.unknown_token = unknown_token
+        self.category_to_idx = None
+        self.idx_to_category = None
+        self.n_categories = None
+        self.unknown_idx = None
 
     def fit(self, categories: np.ndarray) -> 'CategoryEncoder':
         """
@@ -356,7 +367,12 @@ class CategoryEncoder:
         self.unknown_idx = len(unique)
         return self
         """
-        pass
+        unique = sorted(np.unique(categories))
+        self.category_to_idx = {cat: idx for idx, cat in enumerate(unique)}
+        self.idx_to_category = {idx: cat for cat, idx in self.category_to_idx.items()}
+        self.n_categories = len(unique) + 1  # +1 for unknown
+        self.unknown_idx = len(unique)
+        return self
 
     def transform(self, categories: np.ndarray) -> np.ndarray:
         """
@@ -375,11 +391,17 @@ class CategoryEncoder:
             for cat in categories
         ])
         """
-        pass
+        return np.array([
+            self.category_to_idx.get(cat, self.unknown_idx)
+            for cat in categories
+        ])
 
     def inverse_transform(self, indices: np.ndarray) -> np.ndarray:
         """Transform indices back to categories."""
-        pass
+        return np.array([
+            self.idx_to_category.get(int(idx), self.unknown_token)
+            for idx in indices
+        ])
 
 
 class EmbeddingModel:
@@ -469,17 +491,33 @@ class EmbeddingModel:
         Initialize model to None (created in fit)
             self._model = None
         """
-        pass
+        self.config = config
+        self.hidden_dims = hidden_dims or []
+        self.lambda_ = lambda_
+        self.learning_rate = learning_rate
+        self.n_epochs = n_epochs
+        self.batch_size = batch_size
+
+        self.uni_encoder = CategoryEncoder()
+        self.prog_encoder = CategoryEncoder()
+
+        self._uni_embeddings = None
+        self._prog_embeddings = None
+        self._weights = []
+        self._biases = []
+        self._is_fitted = False
+        self._n_continuous = None
+        self._model = None
 
     @property
     def name(self) -> str:
         """Model name."""
-        pass
+        return "Embedding-Based Admission Model"
 
     @property
     def is_fitted(self) -> bool:
         """Check if model is fitted."""
-        pass
+        return self._is_fitted
 
     @property
     def n_params(self) -> int:
@@ -492,7 +530,25 @@ class EmbeddingModel:
         prog_embed_params = n_programs × prog_embed_dim
         linear_params = depends on hidden_dims
         """
-        pass
+        # Embedding parameters
+        uni_embed_params = (self.config.n_universities + 1) * self.config.uni_embed_dim
+        prog_embed_params = (self.config.n_programs + 1) * self.config.prog_embed_dim
+        total = uni_embed_params + prog_embed_params
+
+        # Network weight parameters
+        if self._weights:
+            for w, b in zip(self._weights, self._biases):
+                total += w.size + b.size
+        else:
+            # Estimate from config when model not yet built
+            n_continuous = self._n_continuous if self._n_continuous is not None else 0
+            input_dim = self.config.total_embed_dim + n_continuous
+            for h_dim in self.hidden_dims:
+                total += input_dim * h_dim + h_dim  # weight + bias
+                input_dim = h_dim
+            total += input_dim * 1 + 1  # output layer weight + bias
+
+        return total
 
     def _build_model(self, n_continuous: int):
         """
@@ -542,7 +598,63 @@ class EmbeddingModel:
                 combined = torch.cat([uni_vec, prog_vec, x_continuous], dim=1)
                 return torch.sigmoid(self.fc(combined))
         """
-        pass
+        self._n_continuous = n_continuous
+
+        # Initialize embedding matrices with small random values (+1 for unknown token)
+        self._uni_embeddings = np.random.randn(
+            self.config.n_universities + 1, self.config.uni_embed_dim
+        ) * 0.01
+        self._prog_embeddings = np.random.randn(
+            self.config.n_programs + 1, self.config.prog_embed_dim
+        ) * 0.01
+
+        # Build fully-connected layers
+        input_dim = self.config.total_embed_dim + n_continuous
+        self._weights = []
+        self._biases = []
+
+        for h_dim in self.hidden_dims:
+            # Xavier-like initialization
+            self._weights.append(np.random.randn(input_dim, h_dim) * np.sqrt(2.0 / input_dim))
+            self._biases.append(np.zeros(h_dim))
+            input_dim = h_dim
+
+        # Output layer
+        self._weights.append(np.random.randn(input_dim, 1) * np.sqrt(2.0 / input_dim))
+        self._biases.append(np.zeros(1))
+
+        self._model = True  # Flag indicating model is built
+
+    def _forward(self, uni_idx: np.ndarray, prog_idx: np.ndarray, X_cont: np.ndarray):
+        """
+        Forward pass through the network.
+
+        Returns:
+            Tuple of (output probabilities, list of (pre_activation, post_activation) for each hidden layer)
+        """
+        from .logistic import sigmoid
+
+        # Embedding lookup
+        uni_embed = self._uni_embeddings[uni_idx]   # (batch, uni_embed_dim)
+        prog_embed = self._prog_embeddings[prog_idx]  # (batch, prog_embed_dim)
+
+        # Concatenate embeddings with continuous features
+        combined = np.concatenate([uni_embed, prog_embed, X_cont], axis=1)
+
+        # Forward through hidden layers
+        activations = []  # Store (input, pre_relu, post_relu) for backprop
+        h = combined
+        for i in range(len(self._weights) - 1):
+            z = h @ self._weights[i] + self._biases[i]
+            a = np.maximum(z, 0)  # ReLU
+            activations.append((h, z, a))
+            h = a
+
+        # Output layer
+        z_out = h @ self._weights[-1] + self._biases[-1]  # (batch, 1)
+        probs = sigmoid(z_out.ravel())  # (batch,)
+
+        return probs, activations, h, combined
 
     def fit(
         self,
@@ -583,7 +695,105 @@ class EmbeddingModel:
         Returns:
             self
         """
-        pass
+        from .logistic import sigmoid
+
+        # 1. Encode categorical IDs
+        self.uni_encoder.fit(university_ids)
+        self.prog_encoder.fit(program_ids)
+        uni_idx = self.uni_encoder.transform(university_ids)
+        prog_idx = self.prog_encoder.transform(program_ids)
+
+        # Handle 1D X
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+
+        n_samples = X.shape[0]
+        n_continuous = X.shape[1]
+
+        # 2. Build model
+        self._build_model(n_continuous)
+
+        y = y.astype(float)
+
+        # 3. Training loop with mini-batch SGD
+        for epoch in range(self.n_epochs):
+            # Shuffle data
+            perm = np.random.permutation(n_samples)
+            X_shuf = X[perm]
+            y_shuf = y[perm]
+            uni_shuf = uni_idx[perm]
+            prog_shuf = prog_idx[perm]
+
+            for start in range(0, n_samples, self.batch_size):
+                end = min(start + self.batch_size, n_samples)
+                X_batch = X_shuf[start:end]
+                y_batch = y_shuf[start:end]
+                uni_batch = uni_shuf[start:end]
+                prog_batch = prog_shuf[start:end]
+                batch_size = end - start
+
+                # Forward pass
+                probs, activations, last_hidden, combined = self._forward(
+                    uni_batch, prog_batch, X_batch
+                )
+
+                # Clip for numerical stability
+                probs = np.clip(probs, 1e-15, 1 - 1e-15)
+
+                # Backward pass: compute gradient of BCE loss
+                # dL/dz_out = probs - y  (derivative of BCE w.r.t. pre-sigmoid logits)
+                d_out = (probs - y_batch).reshape(-1, 1)  # (batch, 1)
+
+                # Gradient for output layer
+                d_w_out = last_hidden.T @ d_out / batch_size + self.lambda_ * self._weights[-1]
+                d_b_out = np.mean(d_out, axis=0)
+
+                # Backprop through hidden layers
+                d_hidden_grads_w = []
+                d_hidden_grads_b = []
+                d_prev = d_out @ self._weights[-1].T  # (batch, last_hidden_dim)
+
+                for i in range(len(self._weights) - 2, -1, -1):
+                    h_in, z, a = activations[i]
+                    # ReLU derivative
+                    d_relu = d_prev * (z > 0).astype(float)
+                    d_w = h_in.T @ d_relu / batch_size + self.lambda_ * self._weights[i]
+                    d_b = np.mean(d_relu, axis=0)
+                    d_hidden_grads_w.insert(0, d_w)
+                    d_hidden_grads_b.insert(0, d_b)
+                    if i > 0:
+                        d_prev = d_relu @ self._weights[i].T
+
+                    # Gradient for combined input (needed for embedding gradients)
+                    if i == 0:
+                        d_combined = d_relu @ self._weights[i].T  # (batch, combined_dim)
+
+                # If no hidden layers, gradient flows directly from output
+                if len(self._weights) == 1:
+                    d_combined = d_out @ self._weights[-1].T  # (batch, combined_dim)
+
+                # Extract embedding gradients from d_combined
+                uni_dim = self.config.uni_embed_dim
+                prog_dim = self.config.prog_embed_dim
+                d_uni_embed = d_combined[:, :uni_dim]  # (batch, uni_dim)
+                d_prog_embed = d_combined[:, uni_dim:uni_dim + prog_dim]  # (batch, prog_dim)
+
+                # Update embedding matrices: only update rows that were used
+                for j in range(batch_size):
+                    self._uni_embeddings[uni_batch[j]] -= self.learning_rate * d_uni_embed[j] / batch_size
+                    self._prog_embeddings[prog_batch[j]] -= self.learning_rate * d_prog_embed[j] / batch_size
+
+                # Update network weights
+                for i, (d_w, d_b) in enumerate(zip(d_hidden_grads_w, d_hidden_grads_b)):
+                    self._weights[i] -= self.learning_rate * d_w
+                    self._biases[i] -= self.learning_rate * d_b
+
+                # Update output layer
+                self._weights[-1] -= self.learning_rate * d_w_out
+                self._biases[-1] -= self.learning_rate * d_b_out
+
+        self._is_fitted = True
+        return self
 
     def predict_proba(
         self,
@@ -602,7 +812,18 @@ class EmbeddingModel:
         Returns:
             Probabilities (n_samples,)
         """
-        pass
+        if not self._is_fitted:
+            return None
+
+        # Handle 1D X
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+
+        uni_idx = self.uni_encoder.transform(university_ids)
+        prog_idx = self.prog_encoder.transform(program_ids)
+
+        probs, _, _, _ = self._forward(uni_idx, prog_idx, X)
+        return probs
 
     def get_university_embeddings(self) -> Dict[str, np.ndarray]:
         """
@@ -629,7 +850,12 @@ class EmbeddingModel:
             >>> uoft_vec = embeddings['University of Toronto']
             >>> print(uoft_vec.shape)  # (16,)
         """
-        pass
+        if self._uni_embeddings is None:
+            return None
+        return {
+            name: self._uni_embeddings[idx].copy()
+            for name, idx in self.uni_encoder.category_to_idx.items()
+        }
 
     def get_program_embeddings(self) -> Dict[str, np.ndarray]:
         """
@@ -638,7 +864,12 @@ class EmbeddingModel:
         Returns:
             Dict mapping program name → embedding vector
         """
-        pass
+        if self._prog_embeddings is None:
+            return None
+        return {
+            name: self._prog_embeddings[idx].copy()
+            for name, idx in self.prog_encoder.category_to_idx.items()
+        }
 
     def find_similar_programs(
         self,
@@ -671,7 +902,27 @@ class EmbeddingModel:
         Returns:
             List of (program_name, similarity_score) tuples
         """
-        pass
+        embeddings = self.get_program_embeddings()
+        if embeddings is None or program not in embeddings:
+            return []
+
+        target = embeddings[program]
+        target_norm = np.linalg.norm(target)
+        if target_norm == 0:
+            return []
+
+        similarities = []
+        for name, vec in embeddings.items():
+            if name == program:
+                continue
+            vec_norm = np.linalg.norm(vec)
+            if vec_norm == 0:
+                continue
+            sim = np.dot(target, vec) / (target_norm * vec_norm)
+            similarities.append((name, float(sim)))
+
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        return similarities[:top_k]
 
     def find_similar_universities(
         self,
@@ -679,7 +930,27 @@ class EmbeddingModel:
         top_k: int = 5
     ) -> List[Tuple[str, float]]:
         """Find universities most similar to given university."""
-        pass
+        embeddings = self.get_university_embeddings()
+        if embeddings is None or university not in embeddings:
+            return []
+
+        target = embeddings[university]
+        target_norm = np.linalg.norm(target)
+        if target_norm == 0:
+            return []
+
+        similarities = []
+        for name, vec in embeddings.items():
+            if name == university:
+                continue
+            vec_norm = np.linalg.norm(vec)
+            if vec_norm == 0:
+                continue
+            sim = np.dot(target, vec) / (target_norm * vec_norm)
+            similarities.append((name, float(sim)))
+
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        return similarities[:top_k]
 
     def export_embeddings_for_weaviate(self) -> Dict[str, Any]:
         """
@@ -689,15 +960,96 @@ class EmbeddingModel:
             Dict with 'universities' and 'programs' keys,
             each containing list of {id, name, embedding} dicts
         """
-        pass
+        uni_embeddings = self.get_university_embeddings()
+        prog_embeddings = self.get_program_embeddings()
+
+        if uni_embeddings is None or prog_embeddings is None:
+            return None
+
+        universities = []
+        for name, vec in uni_embeddings.items():
+            universities.append({
+                'id': self.uni_encoder.category_to_idx[name],
+                'name': name,
+                'embedding': vec.tolist(),
+            })
+
+        programs = []
+        for name, vec in prog_embeddings.items():
+            programs.append({
+                'id': self.prog_encoder.category_to_idx[name],
+                'name': name,
+                'embedding': vec.tolist(),
+            })
+
+        return {
+            'universities': universities,
+            'programs': programs,
+        }
 
     def get_params(self) -> Dict[str, Any]:
         """Get model parameters for serialization."""
-        pass
+        params = {
+            'config': {
+                'n_universities': self.config.n_universities,
+                'n_programs': self.config.n_programs,
+                'uni_embed_dim': self.config.uni_embed_dim,
+                'prog_embed_dim': self.config.prog_embed_dim,
+            },
+            'hidden_dims': self.hidden_dims,
+            'lambda_': self.lambda_,
+            'learning_rate': self.learning_rate,
+            'n_epochs': self.n_epochs,
+            'batch_size': self.batch_size,
+            'is_fitted': self._is_fitted,
+        }
+        if self._uni_embeddings is not None:
+            params['uni_embeddings'] = self._uni_embeddings.tolist()
+        if self._prog_embeddings is not None:
+            params['prog_embeddings'] = self._prog_embeddings.tolist()
+        if self._weights:
+            params['weights'] = [w.tolist() for w in self._weights]
+            params['biases'] = [b.tolist() for b in self._biases]
+        if self.uni_encoder.category_to_idx is not None:
+            params['uni_category_to_idx'] = self.uni_encoder.category_to_idx
+        if self.prog_encoder.category_to_idx is not None:
+            params['prog_category_to_idx'] = self.prog_encoder.category_to_idx
+        return params
 
     def set_params(self, params: Dict[str, Any]) -> None:
         """Set model parameters from serialization."""
-        pass
+        if 'config' in params:
+            cfg = params['config']
+            self.config = EmbeddingConfig(**cfg)
+        if 'hidden_dims' in params:
+            self.hidden_dims = params['hidden_dims']
+        if 'lambda_' in params:
+            self.lambda_ = params['lambda_']
+        if 'learning_rate' in params:
+            self.learning_rate = params['learning_rate']
+        if 'n_epochs' in params:
+            self.n_epochs = params['n_epochs']
+        if 'batch_size' in params:
+            self.batch_size = params['batch_size']
+        if 'uni_embeddings' in params:
+            self._uni_embeddings = np.array(params['uni_embeddings'])
+        if 'prog_embeddings' in params:
+            self._prog_embeddings = np.array(params['prog_embeddings'])
+        if 'weights' in params:
+            self._weights = [np.array(w) for w in params['weights']]
+            self._biases = [np.array(b) for b in params['biases']]
+        if 'uni_category_to_idx' in params:
+            self.uni_encoder.category_to_idx = params['uni_category_to_idx']
+            self.uni_encoder.idx_to_category = {v: k for k, v in params['uni_category_to_idx'].items()}
+            self.uni_encoder.n_categories = len(params['uni_category_to_idx']) + 1
+            self.uni_encoder.unknown_idx = len(params['uni_category_to_idx'])
+        if 'prog_category_to_idx' in params:
+            self.prog_encoder.category_to_idx = params['prog_category_to_idx']
+            self.prog_encoder.idx_to_category = {v: k for k, v in params['prog_category_to_idx'].items()}
+            self.prog_encoder.n_categories = len(params['prog_category_to_idx']) + 1
+            self.prog_encoder.unknown_idx = len(params['prog_category_to_idx'])
+        if params.get('is_fitted', False):
+            self._is_fitted = True
 
 
 # =============================================================================

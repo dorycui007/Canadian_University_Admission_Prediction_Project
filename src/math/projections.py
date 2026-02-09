@@ -323,7 +323,11 @@ def project_onto_vector(y: np.ndarray, a: np.ndarray) -> np.ndarray:
 
     MAT223 Reference: Section 4.2.2
     """
-    pass
+    dot_ya = np.dot(y, a)
+    dot_aa = np.dot(a, a)
+    if dot_aa < 1e-10:
+        raise ValueError("Cannot project onto the zero vector")
+    return (dot_ya / dot_aa) * a
 
 
 def project_onto_subspace(y: np.ndarray, X: np.ndarray) -> np.ndarray:
@@ -389,7 +393,8 @@ def project_onto_subspace(y: np.ndarray, X: np.ndarray) -> np.ndarray:
 
     MAT223 Reference: Section 4.7.1
     """
-    pass
+    Q, R = np.linalg.qr(X)
+    return Q @ (Q.T @ y)
 
 
 def compute_residual(y: np.ndarray, X: np.ndarray, beta: np.ndarray) -> np.ndarray:
@@ -439,7 +444,7 @@ def compute_residual(y: np.ndarray, X: np.ndarray, beta: np.ndarray) -> np.ndarr
     ────────────────
     return y - X @ beta
     """
-    pass
+    return y - X @ beta
 
 
 def verify_orthogonality(X: np.ndarray, r: np.ndarray, tol: float = 1e-8) -> bool:
@@ -489,7 +494,8 @@ def verify_orthogonality(X: np.ndarray, r: np.ndarray, tol: float = 1e-8) -> boo
     1. Compute Xtr = X.T @ r
     2. Check np.allclose(Xtr, 0, atol=tol)
     """
-    pass
+    Xtr = X.T @ r
+    return bool(np.allclose(Xtr, 0, atol=tol))
 
 
 def solve_normal_equations(X: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -549,7 +555,11 @@ def solve_normal_equations(X: np.ndarray, y: np.ndarray) -> np.ndarray:
 
     MAT223 Reference: Section 4.8
     """
-    pass
+    if X.shape[0] != y.shape[0]:
+        raise ValueError("X and y must have the same number of rows")
+    XtX = X.T @ X
+    Xty = X.T @ y
+    return np.linalg.solve(XtX, Xty)
 
 
 def solve_weighted_normal_equations(
@@ -613,7 +623,15 @@ def solve_weighted_normal_equations(
     4. Compute XtWz = X.T @ W_diag @ z
     5. Solve and return: np.linalg.solve(XtWX_reg, XtWz)
     """
-    pass
+    if W.ndim == 1:
+        W_diag = np.diag(W)
+    else:
+        W_diag = W
+    p = X.shape[1]
+    XtWX = X.T @ W_diag @ X
+    XtWX_reg = XtWX + lambda_ * np.eye(p)
+    XtWz = X.T @ W_diag @ z
+    return np.linalg.solve(XtWX_reg, XtWz)
 
 
 def compute_hat_matrix(X: np.ndarray) -> np.ndarray:
@@ -668,7 +686,8 @@ def compute_hat_matrix(X: np.ndarray) -> np.ndarray:
     1. Q, R = np.linalg.qr(X)
     2. H = Q @ Q.T (more stable than X @ inv(X.T @ X) @ X.T)
     """
-    pass
+    Q, R = np.linalg.qr(X)
+    return Q @ Q.T
 
 
 def compute_leverage(X: np.ndarray) -> np.ndarray:
@@ -695,7 +714,8 @@ def compute_leverage(X: np.ndarray) -> np.ndarray:
     2. H_diag = np.sum(Q ** 2, axis=1)  # Efficient: don't form full H!
     3. Return H_diag
     """
-    pass
+    Q, R = np.linalg.qr(X)
+    return np.sum(Q ** 2, axis=1)
 
 
 def projection_matrix_onto_complement(X: np.ndarray) -> np.ndarray:
@@ -732,7 +752,9 @@ def projection_matrix_onto_complement(X: np.ndarray) -> np.ndarray:
     1. Compute H = compute_hat_matrix(X)
     2. Return np.eye(n) - H
     """
-    pass
+    n = X.shape[0]
+    H = compute_hat_matrix(X)
+    return np.eye(n) - H
 
 
 def sum_of_squared_residuals(y: np.ndarray, X: np.ndarray, beta: np.ndarray) -> float:
@@ -777,7 +799,8 @@ def sum_of_squared_residuals(y: np.ndarray, X: np.ndarray, beta: np.ndarray) -> 
     r = y - X @ beta
     return float(r @ r)  # or np.sum(r**2)
     """
-    pass
+    r = y - X @ beta
+    return float(r @ r)
 
 
 def r_squared(y: np.ndarray, X: np.ndarray, beta: np.ndarray) -> float:
@@ -820,7 +843,9 @@ def r_squared(y: np.ndarray, X: np.ndarray, beta: np.ndarray) -> float:
     2. Compute SST = np.sum((y - np.mean(y))**2)
     3. Return 1 - SSR/SST
     """
-    pass
+    ssr = sum_of_squared_residuals(y, X, beta)
+    sst = float(np.sum((y - np.mean(y)) ** 2))
+    return 1.0 - ssr / sst
 
 
 # =============================================================================

@@ -248,17 +248,18 @@ class BetaPrior:
     @property
     def mean(self) -> float:
         """Prior mean = α / (α + β)."""
-        pass
+        return self.alpha / (self.alpha + self.beta)
 
     @property
     def variance(self) -> float:
         """Prior variance."""
-        pass
+        a, b = self.alpha, self.beta
+        return (a * b) / ((a + b) ** 2 * (a + b + 1))
 
     @property
     def strength(self) -> float:
         """Effective sample size = α + β."""
-        pass
+        return self.alpha + self.beta
 
     @classmethod
     def from_mean_strength(cls, mean: float, strength: float) -> 'BetaPrior':
@@ -283,7 +284,9 @@ class BetaPrior:
         beta = (1 - mean) * strength
         return cls(alpha=alpha, beta=beta)
         """
-        pass
+        alpha = mean * strength
+        beta = (1 - mean) * strength
+        return cls(alpha=alpha, beta=beta)
 
 
 @dataclass
@@ -325,7 +328,7 @@ class ProgramPosterior:
 
         E[P|data] = α_post / (α_post + β_post)
         """
-        pass
+        return self.alpha_post / (self.alpha_post + self.beta_post)
 
     @property
     def posterior_mode(self) -> float:
@@ -335,12 +338,13 @@ class ProgramPosterior:
         Mode = (α_post - 1) / (α_post + β_post - 2)
         Only valid if α_post, β_post > 1.
         """
-        pass
+        return (self.alpha_post - 1) / (self.alpha_post + self.beta_post - 2)
 
     @property
     def posterior_variance(self) -> float:
         """Posterior variance of admission probability."""
-        pass
+        a, b = self.alpha_post, self.beta_post
+        return (a * b) / ((a + b) ** 2 * (a + b + 1))
 
     def credible_interval(self, level: float = 0.80) -> Tuple[float, float]:
         """
@@ -377,7 +381,11 @@ class ProgramPosterior:
         upper = beta.ppf(1 - alpha_tail, self.alpha_post, self.beta_post)
         return (lower, upper)
         """
-        pass
+        from scipy.stats import beta
+        alpha_tail = (1 - level) / 2
+        lower = beta.ppf(alpha_tail, self.alpha_post, self.beta_post)
+        upper = beta.ppf(1 - alpha_tail, self.alpha_post, self.beta_post)
+        return (lower, upper)
 
 
 class BaselineModel:
@@ -439,24 +447,28 @@ class BaselineModel:
         4. Set self._is_fitted = False
         5. self.global_prior = None
         """
-        pass
+        self.prior_strength = prior_strength
+        self.use_hierarchical = use_hierarchical
+        self.posteriors: Dict[str, ProgramPosterior] = {}
+        self._is_fitted = False
+        self.global_prior: Optional[BetaPrior] = None
 
     @property
     def name(self) -> str:
         """Model name for display."""
-        pass
+        return "Beta-Binomial Baseline"
 
     @property
     def is_fitted(self) -> bool:
         """Check if model has been fitted."""
-        pass
+        return self._is_fitted
 
     @property
     def n_params(self) -> int:
         """
         Number of parameters = 2 per program (α, β posteriors).
         """
-        pass
+        return 2 * len(self.posteriors)
 
     def fit(
         self,
@@ -512,7 +524,39 @@ class BaselineModel:
         4. Set self._is_fitted = True
         5. Return self
         """
-        pass
+        # Compute global admission rate
+        global_rate = np.mean(y)
+        # Create global prior
+        self.global_prior = BetaPrior.from_mean_strength(global_rate, self.prior_strength)
+
+        # Compute posterior for each unique program
+        unique_programs = np.unique(program_ids)
+        for prog in unique_programs:
+            mask = program_ids == prog
+            k = int(np.sum(y[mask]))      # admits
+            n = int(np.sum(mask))          # total observations
+
+            # Determine university
+            if university_ids is not None:
+                uni = university_ids[mask][0]
+            else:
+                uni = prog
+
+            alpha_post = self.global_prior.alpha + k
+            beta_post = self.global_prior.beta + (n - k)
+
+            self.posteriors[prog] = ProgramPosterior(
+                program_id=prog,
+                university=uni,
+                program_name=prog,
+                alpha_post=alpha_post,
+                beta_post=beta_post,
+                n_observations=n,
+                n_admits=k,
+            )
+
+        self._is_fitted = True
+        return self
 
     def predict_proba(
         self,
@@ -544,7 +588,16 @@ class BaselineModel:
                 probs[i] = self.global_prior.mean
         return probs
         """
-        pass
+        if not self.is_fitted:
+            raise RuntimeError("Model is not fitted. Call fit() first.")
+        probs = np.zeros(len(program_ids))
+        for i, prog_id in enumerate(program_ids):
+            if prog_id in self.posteriors:
+                probs[i] = self.posteriors[prog_id].posterior_mean
+            else:
+                # Unseen program: use global prior mean
+                probs[i] = self.global_prior.mean
+        return probs
 
     def predict_interval(
         self,
@@ -586,7 +639,26 @@ class BaselineModel:
             lower[i], upper[i] = posterior.credible_interval(level)
         return lower, upper
         """
-        pass
+        if not self.is_fitted:
+            raise RuntimeError("Model is not fitted. Call fit() first.")
+        lower = np.zeros(len(program_ids))
+        upper = np.zeros(len(program_ids))
+        for i, prog_id in enumerate(program_ids):
+            if prog_id in self.posteriors:
+                posterior = self.posteriors[prog_id]
+            else:
+                # Create a temporary posterior from global prior for unseen programs
+                posterior = ProgramPosterior(
+                    program_id=prog_id,
+                    university="unknown",
+                    program_name=prog_id,
+                    alpha_post=self.global_prior.alpha,
+                    beta_post=self.global_prior.beta,
+                    n_observations=0,
+                    n_admits=0,
+                )
+            lower[i], upper[i] = posterior.credible_interval(level)
+        return lower, upper
 
     def get_program_summary(self, program_id: str) -> Dict[str, Any]:
         """
@@ -611,7 +683,24 @@ class BaselineModel:
             >>> print(f"  Observed: {summary['observed_rate']:.1%}")
             >>> print(f"  Shrinkage: {summary['shrinkage']:.1%}")
         """
-        pass
+        if program_id not in self.posteriors:
+            raise KeyError(f"Program '{program_id}' not found in posteriors.")
+        post = self.posteriors[program_id]
+        observed_rate = post.n_admits / post.n_observations if post.n_observations > 0 else 0.0
+        ci_lower, ci_upper = post.credible_interval(0.80)
+        shrinkage = compute_shrinkage_factor(post.n_observations, self.prior_strength)
+        return {
+            'program_id': post.program_id,
+            'university': post.university,
+            'program_name': post.program_name,
+            'n_observations': post.n_observations,
+            'n_admits': post.n_admits,
+            'observed_rate': observed_rate,
+            'posterior_mean': post.posterior_mean,
+            'ci_80_lower': ci_lower,
+            'ci_80_upper': ci_upper,
+            'shrinkage': shrinkage,
+        }
 
     def rank_programs_by_difficulty(self) -> List[Tuple[str, float, float]]:
         """
@@ -632,15 +721,59 @@ class BaselineModel:
                     for pid, post in self.posteriors.items()]
         return sorted(programs, key=lambda x: x[1])
         """
-        pass
+        programs = [(pid, post.posterior_mean, post.n_observations)
+                    for pid, post in self.posteriors.items()]
+        return sorted(programs, key=lambda x: x[1])
 
     def get_params(self) -> Dict[str, Any]:
         """Get model parameters for serialization."""
-        pass
+        params: Dict[str, Any] = {
+            'prior_strength': self.prior_strength,
+            'use_hierarchical': self.use_hierarchical,
+            'is_fitted': self._is_fitted,
+        }
+        if self.global_prior is not None:
+            params['global_prior'] = {
+                'alpha': self.global_prior.alpha,
+                'beta': self.global_prior.beta,
+            }
+        posteriors_data = {}
+        for pid, post in self.posteriors.items():
+            posteriors_data[pid] = {
+                'program_id': post.program_id,
+                'university': post.university,
+                'program_name': post.program_name,
+                'alpha_post': post.alpha_post,
+                'beta_post': post.beta_post,
+                'n_observations': post.n_observations,
+                'n_admits': post.n_admits,
+            }
+        params['posteriors'] = posteriors_data
+        return params
 
     def set_params(self, params: Dict[str, Any]) -> None:
         """Set model parameters from serialization."""
-        pass
+        if 'prior_strength' in params:
+            self.prior_strength = params['prior_strength']
+        if 'use_hierarchical' in params:
+            self.use_hierarchical = params['use_hierarchical']
+        if 'is_fitted' in params:
+            self._is_fitted = params['is_fitted']
+        if 'global_prior' in params:
+            gp = params['global_prior']
+            self.global_prior = BetaPrior(alpha=gp['alpha'], beta=gp['beta'])
+        if 'posteriors' in params:
+            self.posteriors = {}
+            for pid, pdata in params['posteriors'].items():
+                self.posteriors[pid] = ProgramPosterior(
+                    program_id=pdata['program_id'],
+                    university=pdata['university'],
+                    program_name=pdata['program_name'],
+                    alpha_post=pdata['alpha_post'],
+                    beta_post=pdata['beta_post'],
+                    n_observations=pdata['n_observations'],
+                    n_admits=pdata['n_admits'],
+                )
 
 
 def compute_shrinkage_factor(
@@ -673,7 +806,7 @@ def compute_shrinkage_factor(
     Returns:
         Shrinkage factor in [0, 1]
     """
-    pass
+    return prior_strength / (prior_strength + n_observations)
 
 
 # =============================================================================

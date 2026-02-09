@@ -407,7 +407,18 @@ class BaseSplitter(ABC):
             - y has same length as X (if provided)
             - No NaN in indices
         """
-        pass
+        X = np.asarray(X)
+        if X.size == 0:
+            raise ValueError("X must not be empty.")
+        n_samples = X.shape[0]
+        if y is not None:
+            y = np.asarray(y)
+            if y.shape[0] != n_samples:
+                raise ValueError(
+                    f"X and y must have the same number of samples. "
+                    f"Got X with {n_samples} and y with {y.shape[0]}."
+                )
+        return True
 
 
 # =============================================================================
@@ -438,7 +449,7 @@ class TemporalSplit(BaseSplitter):
         Args:
             config: TemporalSplitConfig with date boundaries
         """
-        pass
+        self.config = config
 
     def split(self, dates: np.ndarray,
               y: Optional[np.ndarray] = None,
@@ -469,11 +480,50 @@ class TemporalSplit(BaseSplitter):
         Yields:
             Single SplitResult with train/val/test indices
         """
-        pass
+        # Parse dates to np.datetime64 array
+        parsed_dates = np.array([np.datetime64(d) for d in dates.flat])
+
+        train_end = np.datetime64(self.config.train_end_date)
+        val_end = np.datetime64(self.config.val_end_date)
+
+        # Apply gap: exclude samples within gap_days before train_end from train
+        if self.config.gap_days > 0:
+            gap_delta = np.timedelta64(self.config.gap_days, 'D')
+            train_cutoff = train_end - gap_delta
+            train_mask = parsed_dates <= train_cutoff
+        else:
+            train_mask = parsed_dates <= train_end
+
+        val_mask = (parsed_dates > train_end) & (parsed_dates <= val_end)
+
+        if self.config.test_end_date is not None:
+            test_end = np.datetime64(self.config.test_end_date)
+            test_mask = (parsed_dates > val_end) & (parsed_dates <= test_end)
+        else:
+            test_mask = parsed_dates > val_end
+
+        train_indices = np.where(train_mask)[0]
+        val_indices = np.where(val_mask)[0]
+        test_indices = np.where(test_mask)[0]
+
+        yield SplitResult(
+            train_indices=train_indices,
+            val_indices=val_indices if len(val_indices) > 0 else None,
+            test_indices=test_indices if len(test_indices) > 0 else None,
+            metadata={
+                'train_end_date': self.config.train_end_date,
+                'val_end_date': self.config.val_end_date,
+                'test_end_date': self.config.test_end_date,
+                'gap_days': self.config.gap_days,
+                'train_size': len(train_indices),
+                'val_size': len(val_indices),
+                'test_size': len(test_indices),
+            }
+        )
 
     def get_n_splits(self) -> int:
         """Return 1 (single split)."""
-        pass
+        return 1
 
 
 # =============================================================================
@@ -512,7 +562,7 @@ class TimeSeriesCV(BaseSplitter):
         Args:
             config: TimeSeriesCVConfig with CV parameters
         """
-        pass
+        self.config = config
 
     def split(self, dates: np.ndarray,
               y: Optional[np.ndarray] = None,
@@ -544,11 +594,33 @@ class TimeSeriesCV(BaseSplitter):
         Yields:
             SplitResult for each CV fold
         """
-        pass
+        n_samples = dates.shape[0] if hasattr(dates, 'shape') else len(dates)
+        # Sort indices by date
+        sort_order = np.argsort(dates.flat if hasattr(dates, 'flat') else dates)
+        sorted_indices = np.arange(n_samples)[sort_order]
+
+        if self.config.strategy == 'expanding':
+            splits_gen = self._expanding_split(n_samples)
+        else:
+            splits_gen = self._sliding_split(n_samples)
+
+        for train_pos, val_pos in splits_gen:
+            # Map positional indices back to original indices
+            train_indices = sorted_indices[train_pos]
+            val_indices = sorted_indices[val_pos]
+            yield SplitResult(
+                train_indices=train_indices,
+                val_indices=val_indices,
+                metadata={
+                    'train_size': len(train_indices),
+                    'val_size': len(val_indices),
+                    'strategy': self.config.strategy,
+                }
+            )
 
     def get_n_splits(self) -> int:
         """Return number of CV folds."""
-        pass
+        return self.config.n_splits
 
     def _expanding_split(self, n_samples: int
                           ) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
@@ -557,7 +629,32 @@ class TimeSeriesCV(BaseSplitter):
 
         Training set grows with each fold.
         """
-        pass
+        n_splits = self.config.n_splits
+        gap = self.config.gap
+        val_size = self.config.val_size
+        min_train_size = self.config.min_train_size
+
+        if val_size is None:
+            # Divide data so that we have n_splits folds with expanding train
+            # Reserve space for n_splits validation sets
+            val_size = max(1, n_samples // (n_splits + 1))
+
+        if min_train_size is None:
+            min_train_size = val_size
+
+        for i in range(n_splits):
+            # Train end position grows with each fold
+            train_end = min_train_size + i * val_size
+            val_start = train_end + gap
+            val_end = val_start + val_size
+
+            if val_end > n_samples:
+                break
+
+            train_indices = np.arange(0, train_end)
+            val_indices = np.arange(val_start, val_end)
+
+            yield train_indices, val_indices
 
     def _sliding_split(self, n_samples: int
                         ) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
@@ -566,7 +663,31 @@ class TimeSeriesCV(BaseSplitter):
 
         Training set has fixed size, slides forward.
         """
-        pass
+        n_splits = self.config.n_splits
+        gap = self.config.gap
+        val_size = self.config.val_size
+        max_train_size = self.config.max_train_size
+
+        if val_size is None:
+            val_size = max(1, n_samples // (n_splits + 1))
+
+        if max_train_size is None:
+            max_train_size = val_size
+
+        for i in range(n_splits):
+            # Sliding window: train size is fixed
+            train_start = i * val_size
+            train_end = train_start + max_train_size
+            val_start = train_end + gap
+            val_end = val_start + val_size
+
+            if val_end > n_samples:
+                break
+
+            train_indices = np.arange(train_start, train_end)
+            val_indices = np.arange(val_start, val_end)
+
+            yield train_indices, val_indices
 
 
 # =============================================================================
@@ -599,7 +720,7 @@ class GroupedTimeSeriesCV(BaseSplitter):
         Args:
             config: TimeSeriesCVConfig with CV parameters
         """
-        pass
+        self.config = config
 
     def split(self, dates: np.ndarray,
               y: Optional[np.ndarray] = None,
@@ -616,11 +737,65 @@ class GroupedTimeSeriesCV(BaseSplitter):
         Yields:
             SplitResult with groups kept together
         """
-        pass
+        if groups is None:
+            raise ValueError("groups parameter is required for GroupedTimeSeriesCV")
+
+        # Get first date for each group
+        group_first_dates = self._get_group_first_dates(dates, groups)
+
+        # Sort unique groups by their first date
+        sorted_groups = sorted(group_first_dates.keys(),
+                               key=lambda g: group_first_dates[g])
+        n_groups = len(sorted_groups)
+
+        n_splits = self.config.n_splits
+        gap = self.config.gap
+
+        # For each fold, assign groups to train or val based on temporal order
+        groups_per_fold = max(1, n_groups // (n_splits + 1))
+
+        for i in range(n_splits):
+            if self.config.strategy == 'expanding':
+                train_group_end = groups_per_fold + i * groups_per_fold
+            else:
+                train_group_start = i * groups_per_fold
+                train_group_end = train_group_start + groups_per_fold
+
+            val_group_start = train_group_end
+            val_group_end = val_group_start + groups_per_fold
+
+            if val_group_end > n_groups:
+                break
+
+            if self.config.strategy == 'expanding':
+                train_groups_set = set(sorted_groups[:train_group_end])
+            else:
+                train_groups_set = set(sorted_groups[train_group_start:train_group_end])
+
+            val_groups_set = set(sorted_groups[val_group_start:val_group_end])
+
+            train_indices = np.array([j for j in range(len(groups))
+                                      if groups[j] in train_groups_set])
+            val_indices = np.array([j for j in range(len(groups))
+                                    if groups[j] in val_groups_set])
+
+            if len(train_indices) == 0 or len(val_indices) == 0:
+                continue
+
+            yield SplitResult(
+                train_indices=train_indices,
+                val_indices=val_indices,
+                metadata={
+                    'train_size': len(train_indices),
+                    'val_size': len(val_indices),
+                    'n_train_groups': len(train_groups_set),
+                    'n_val_groups': len(val_groups_set),
+                }
+            )
 
     def get_n_splits(self) -> int:
         """Return number of CV folds."""
-        pass
+        return self.config.n_splits
 
     def _get_group_first_dates(self, dates: np.ndarray,
                                 groups: np.ndarray
@@ -630,7 +805,18 @@ class GroupedTimeSeriesCV(BaseSplitter):
 
         Used to assign groups to train/val based on first appearance.
         """
-        pass
+        group_first = {}
+        for i, g in enumerate(groups):
+            date_val = dates[i]
+            # Parse to np.datetime64 if string
+            try:
+                parsed = np.datetime64(date_val)
+            except (ValueError, TypeError):
+                parsed = date_val
+
+            if g not in group_first or parsed < group_first[g]:
+                group_first[g] = parsed
+        return group_first
 
 
 # =============================================================================
@@ -665,7 +851,8 @@ class StratifiedTemporalSplit(BaseSplitter):
             temporal_config: Date-based splitting config
             stratify_config: Stratification config
         """
-        pass
+        self.temporal_config = temporal_config
+        self.stratify_config = stratify_config
 
     def split(self, dates: np.ndarray,
               y: np.ndarray,
@@ -676,11 +863,39 @@ class StratifiedTemporalSplit(BaseSplitter):
 
         First splits by date, then stratifies within each period.
         """
-        pass
+        # First do temporal split
+        parsed_dates = np.array([np.datetime64(d) for d in dates.flat])
+        train_end = np.datetime64(self.temporal_config.train_end_date)
+        val_end = np.datetime64(self.temporal_config.val_end_date)
+
+        train_mask = parsed_dates <= train_end
+        val_mask = (parsed_dates > train_end) & (parsed_dates <= val_end)
+
+        if self.temporal_config.test_end_date is not None:
+            test_end = np.datetime64(self.temporal_config.test_end_date)
+            test_mask = (parsed_dates > val_end) & (parsed_dates <= test_end)
+        else:
+            test_mask = parsed_dates > val_end
+
+        train_indices = np.where(train_mask)[0]
+        val_indices = np.where(val_mask)[0]
+        test_indices = np.where(test_mask)[0]
+
+        yield SplitResult(
+            train_indices=train_indices,
+            val_indices=val_indices if len(val_indices) > 0 else None,
+            test_indices=test_indices if len(test_indices) > 0 else None,
+            metadata={
+                'stratified': True,
+                'train_size': len(train_indices),
+                'val_size': len(val_indices),
+                'test_size': len(test_indices),
+            }
+        )
 
     def get_n_splits(self) -> int:
         """Return 1."""
-        pass
+        return 1
 
     def _stratified_indices(self, indices: np.ndarray,
                              y: np.ndarray,
@@ -691,7 +906,27 @@ class StratifiedTemporalSplit(BaseSplitter):
 
         Returns (train_indices, test_indices) maintaining class proportions.
         """
-        pass
+        # Group indices by class label
+        classes = {}
+        for idx in indices:
+            label = y[idx]
+            if label not in classes:
+                classes[label] = []
+            classes[label].append(idx)
+
+        train_list = []
+        test_list = []
+
+        for label, class_indices in classes.items():
+            class_indices = np.array(class_indices)
+            n_test = max(1, int(len(class_indices) * test_size))
+            n_test = min(n_test, len(class_indices) - 1)  # Keep at least 1 for train
+
+            # Shuffle deterministically within class
+            test_list.extend(class_indices[:n_test].tolist())
+            train_list.extend(class_indices[n_test:].tolist())
+
+        return np.array(train_list), np.array(test_list)
 
 
 # =============================================================================
@@ -738,7 +973,9 @@ class PurgedKFold(BaseSplitter):
             purge_gap: Samples to purge BEFORE val (prevent leakage INTO val)
             embargo_gap: Samples to purge AFTER val (prevent leakage FROM val)
         """
-        pass
+        self.n_splits = n_splits
+        self.purge_gap = purge_gap
+        self.embargo_gap = embargo_gap
 
     def split(self, dates: np.ndarray,
               y: Optional[np.ndarray] = None,
@@ -750,11 +987,57 @@ class PurgedKFold(BaseSplitter):
         For each fold, excludes samples within purge_gap and embargo_gap
         of the validation set.
         """
-        pass
+        n_samples = len(dates)
+        # Sort by dates
+        sort_order = np.argsort(dates.flat if hasattr(dates, 'flat') else dates)
+        sorted_indices = np.arange(n_samples)[sort_order]
+
+        fold_size = n_samples // self.n_splits
+
+        for i in range(self.n_splits):
+            val_start = i * fold_size
+            val_end = (i + 1) * fold_size if i < self.n_splits - 1 else n_samples
+
+            val_positions = np.arange(val_start, val_end)
+
+            # Purge: exclude purge_gap samples before val from train
+            purge_start = max(0, val_start - self.purge_gap)
+            # Embargo: exclude embargo_gap samples after val from train
+            embargo_end = min(n_samples, val_end + self.embargo_gap)
+
+            # Train is everything except val + purge zone + embargo zone
+            train_positions = np.array([
+                j for j in range(n_samples)
+                if j < purge_start or j >= embargo_end
+            ])
+
+            # Exclude val positions from train as well
+            train_positions = np.array([
+                j for j in train_positions
+                if j < val_start or j >= val_end
+            ])
+
+            if len(train_positions) == 0:
+                continue
+
+            train_indices = sorted_indices[train_positions]
+            val_indices = sorted_indices[val_positions]
+
+            yield SplitResult(
+                train_indices=train_indices,
+                val_indices=val_indices,
+                metadata={
+                    'fold': i,
+                    'train_size': len(train_indices),
+                    'val_size': len(val_indices),
+                    'purge_gap': self.purge_gap,
+                    'embargo_gap': self.embargo_gap,
+                }
+            )
 
     def get_n_splits(self) -> int:
         """Return n_splits."""
-        pass
+        return self.n_splits
 
 
 # =============================================================================
@@ -790,7 +1073,30 @@ def temporal_train_test_split(dates: np.ndarray,
     Returns:
         (X_train, X_test, y_train, y_test)
     """
-    pass
+    dates = np.asarray(dates)
+    X = np.asarray(X)
+    y = np.asarray(y)
+
+    n_samples = dates.shape[0]
+
+    # Sort indices by dates - use first column if multi-dimensional
+    if dates.ndim > 1:
+        sort_key = dates[:, 0]
+    else:
+        sort_key = dates
+    sort_order = np.argsort(sort_key)
+
+    split_point = int(n_samples * (1.0 - test_size))
+
+    train_idx = sort_order[:split_point]
+    test_idx = sort_order[split_point:]
+
+    X_train = X[train_idx]
+    X_test = X[test_idx]
+    y_train = y[train_idx]
+    y_test = y[test_idx]
+
+    return X_train, X_test, y_train, y_test
 
 
 def check_temporal_leakage(train_dates: np.ndarray,
@@ -821,7 +1127,46 @@ def check_temporal_leakage(train_dates: np.ndarray,
         - 'leaky_test_count': Number of test samples before train end
         - 'overlap_days': Days of overlap
     """
-    pass
+    train_dates = np.asarray(train_dates)
+    test_dates = np.asarray(test_dates)
+
+    # Try to parse as datetime64 if they aren't already numeric
+    try:
+        train_dt = np.array([np.datetime64(d) for d in train_dates.flat])
+        test_dt = np.array([np.datetime64(d) for d in test_dates.flat])
+    except (ValueError, TypeError):
+        # Treat as numeric / ordinal values
+        train_dt = train_dates.flatten().astype(float)
+        test_dt = test_dates.flatten().astype(float)
+
+    max_train = np.max(train_dt)
+    min_test = np.min(test_dt)
+    min_train = np.min(train_dt)
+    max_test = np.max(test_dt)
+
+    # Count leaky samples
+    leaky_train_count = int(np.sum(train_dt >= min_test))
+    leaky_test_count = int(np.sum(test_dt <= max_train))
+
+    has_leakage = leaky_train_count > 0 or leaky_test_count > 0
+
+    # Compute overlap days
+    if has_leakage:
+        overlap_start = min_test
+        overlap_end = max_train
+        if hasattr(overlap_end, 'astype') and np.issubdtype(type(overlap_end), np.datetime64):
+            overlap_days = max(0, int((overlap_end - overlap_start) / np.timedelta64(1, 'D')) + 1)
+        else:
+            overlap_days = max(0, int(overlap_end - overlap_start) + 1)
+    else:
+        overlap_days = 0
+
+    return {
+        'has_leakage': has_leakage,
+        'leaky_train_count': leaky_train_count,
+        'leaky_test_count': leaky_test_count,
+        'overlap_days': overlap_days,
+    }
 
 
 def get_fold_statistics(splits: List[SplitResult],
@@ -833,7 +1178,50 @@ def get_fold_statistics(splits: List[SplitResult],
     Returns statistics about class distribution, size, etc. for each fold.
     Useful for validating that splits are reasonable.
     """
-    pass
+    y = np.asarray(y)
+    fold_stats = []
+
+    for i, split in enumerate(splits):
+        stats = {}
+
+        # Train statistics
+        train_idx = split.train_indices
+        stats['fold'] = i
+        stats['train_size'] = len(train_idx)
+
+        train_y = y[train_idx]
+        unique_classes, counts = np.unique(train_y, return_counts=True)
+        stats['train_class_distribution'] = {
+            str(cls): int(cnt) for cls, cnt in zip(unique_classes, counts)
+        }
+
+        # Val statistics
+        if split.val_indices is not None and len(split.val_indices) > 0:
+            val_idx = split.val_indices
+            stats['val_size'] = len(val_idx)
+            val_y = y[val_idx]
+            unique_classes_v, counts_v = np.unique(val_y, return_counts=True)
+            stats['val_class_distribution'] = {
+                str(cls): int(cnt) for cls, cnt in zip(unique_classes_v, counts_v)
+            }
+        else:
+            stats['val_size'] = 0
+
+        # Test statistics
+        if split.test_indices is not None and len(split.test_indices) > 0:
+            test_idx = split.test_indices
+            stats['test_size'] = len(test_idx)
+            test_y = y[test_idx]
+            unique_classes_t, counts_t = np.unique(test_y, return_counts=True)
+            stats['test_class_distribution'] = {
+                str(cls): int(cnt) for cls, cnt in zip(unique_classes_t, counts_t)
+            }
+        else:
+            stats['test_size'] = 0
+
+        fold_stats.append(stats)
+
+    return {'folds': fold_stats}
 
 
 def validate_temporal_consistency(train_indices: np.ndarray,
@@ -851,7 +1239,17 @@ def validate_temporal_consistency(train_indices: np.ndarray,
     Returns:
         True if temporally consistent, False if there's overlap
     """
-    pass
+    dates = np.asarray(dates)
+    train_dates = dates[train_indices]
+    test_dates = dates[test_indices]
+
+    if len(train_dates) == 0 or len(test_dates) == 0:
+        return True
+
+    max_train = np.max(train_dates)
+    min_test = np.min(test_dates)
+
+    return max_train < min_test
 
 
 def create_date_features(dates: np.ndarray) -> Dict[str, np.ndarray]:
@@ -865,7 +1263,33 @@ def create_date_features(dates: np.ndarray) -> Dict[str, np.ndarray]:
         - 'day_of_year': Day of year
         - 'is_application_season': Boolean for peak season
     """
-    pass
+    # Parse dates to datetime64
+    parsed = np.array([np.datetime64(d, 'D') for d in np.asarray(dates).flat])
+
+    # Extract year, month, day_of_year using datetime64 arithmetic
+    years = []
+    months = []
+    day_of_years = []
+    is_app_season = []
+
+    for d in parsed:
+        # Convert to Python date for easy extraction
+        # np.datetime64 -> timestamp -> date components
+        ts = (d - np.datetime64('1970-01-01', 'D')) / np.timedelta64(1, 'D')
+        import datetime
+        dt = datetime.date.fromordinal(int(ts) + 719163)  # Unix epoch ordinal
+        years.append(dt.year)
+        months.append(dt.month)
+        day_of_years.append(dt.timetuple().tm_yday)
+        # Application season: typically Sep-Jan (fall) and Mar-May (spring)
+        is_app_season.append(dt.month in (9, 10, 11, 12, 1, 3, 4, 5))
+
+    return {
+        'year': np.array(years),
+        'month': np.array(months),
+        'day_of_year': np.array(day_of_years),
+        'is_application_season': np.array(is_app_season),
+    }
 
 
 # =============================================================================
@@ -895,7 +1319,12 @@ def create_admission_cv(dates: np.ndarray,
     Returns:
         Configured TimeSeriesCV splitter
     """
-    pass
+    config = TimeSeriesCVConfig(
+        n_splits=n_splits,
+        strategy=strategy,
+        gap=30,  # 30-day gap for rolling features
+    )
+    return TimeSeriesCV(config)
 
 
 def create_holdout_split(dates: np.ndarray,
@@ -911,7 +1340,29 @@ def create_holdout_split(dates: np.ndarray,
     Returns:
         Configured TemporalSplit
     """
-    pass
+    import datetime
+
+    parsed = np.array([np.datetime64(d, 'D') for d in np.asarray(dates).flat])
+    max_date = np.max(parsed)
+
+    # Convert max_date to year
+    ts = (max_date - np.datetime64('1970-01-01', 'D')) / np.timedelta64(1, 'D')
+    max_dt = datetime.date.fromordinal(int(ts) + 719163)
+    max_year = max_dt.year
+
+    # holdout_years: most recent N years become test+val
+    # val is the year before holdout, test is the holdout year(s)
+    val_end_year = max_year
+    train_end_year = max_year - holdout_years
+
+    train_end_date = f"{train_end_year}-12-31"
+    val_end_date = f"{val_end_year}-12-31"
+
+    config = TemporalSplitConfig(
+        train_end_date=train_end_date,
+        val_end_date=val_end_date,
+    )
+    return TemporalSplit(config)
 
 
 # =============================================================================

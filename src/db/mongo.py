@@ -187,7 +187,7 @@ INDEXING STRATEGY
 │     { "student_id": 1 }, unique=True                                        │
 │                                                                             │
 │     Prevents duplicate student records                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
+│└─────────────────────────────────────────────────────────────────────────────┘
 
 
 ==============================================================================
@@ -219,7 +219,7 @@ CONNECTION POOLING AND PERFORMANCE
 │  • Reuse the same client across requests                                    │
 │  • Client is thread-safe                                                    │
 │  • Set appropriate timeouts                                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+│  └─────────────────────────────────────────────────────────────────────────────┘
 
 
 Author: Grade Prediction Team
@@ -241,7 +241,7 @@ class MongoConfig:
     """
     Configuration for MongoDB connection.
 
-    ┌─────────────────────────────────────────────────────────────┐
+    ┌─────────────────────────────────────────────────────────────────┐
     │  MONGODB CONNECTION CONFIGURATION                           │
     │                                                             │
     │  host: MongoDB server hostname                              │
@@ -456,6 +456,103 @@ class BaseMongoClient(ABC):
 
 
 # =============================================================================
+# HELPER: resolve dotted path in nested dict
+# =============================================================================
+
+def _get_nested(doc: Dict[str, Any], path: str) -> Any:
+    """Resolve a dotted path like 'demographics.province' in a nested dict.
+
+    Returns a sentinel _MISSING if any key along the path is absent.
+    """
+    parts = path.split(".")
+    current = doc
+    for part in parts:
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            return _MISSING
+    return current
+
+
+# Sentinel for missing values
+class _MissingSentinel:
+    """Sentinel object indicating a missing value during nested lookup."""
+    pass
+
+_MISSING = _MissingSentinel()
+
+
+def _match_query(doc: Dict[str, Any], query: Dict[str, Any]) -> bool:
+    """Check if a document matches ALL key-value pairs in a query.
+
+    Supports:
+    - Dotted paths: "demographics.province" -> doc["demographics"]["province"]
+    - $elemMatch on array fields
+    - Simple equality checks
+    """
+    for key, value in query.items():
+        if isinstance(value, dict) and "$elemMatch" in value:
+            # $elemMatch: check if any element in the array matches all conditions
+            arr = _get_nested(doc, key)
+            if isinstance(arr, _MissingSentinel) or not isinstance(arr, list):
+                return False
+            elem_query = value["$elemMatch"]
+            found = False
+            for elem in arr:
+                if isinstance(elem, dict) and all(
+                    elem.get(ek) == ev for ek, ev in elem_query.items()
+                ):
+                    found = True
+                    break
+            if not found:
+                return False
+        else:
+            doc_value = _get_nested(doc, key)
+            if isinstance(doc_value, _MissingSentinel):
+                return False
+            if doc_value != value:
+                return False
+    return True
+
+
+def _apply_projection(doc: Dict[str, Any],
+                       projection: Optional[Dict[str, int]]) -> Dict[str, Any]:
+    """Apply a projection to a document.
+
+    If projection is None or empty, return full doc copy.
+    Include fields where value == 1. Always include _id unless explicitly excluded.
+    """
+    if not projection:
+        return dict(doc)
+
+    result = {}
+    # Always include _id unless explicitly excluded
+    if projection.get("_id", 1) != 0 and "_id" in doc:
+        result["_id"] = doc["_id"]
+
+    for field_path, include in projection.items():
+        if field_path == "_id":
+            continue
+        if include == 1:
+            val = _get_nested(doc, field_path)
+            if not isinstance(val, _MissingSentinel):
+                # For dotted paths, build nested structure
+                parts = field_path.split(".")
+                if len(parts) == 1:
+                    result[field_path] = val
+                else:
+                    # Build nested dict
+                    current = result
+                    for part in parts[:-1]:
+                        if part not in current:
+                            current[part] = {}
+                        current = current[part]
+                    current[parts[-1]] = val
+
+    return result
+
+
+# =============================================================================
 # MAIN MONGODB CLIENT
 # =============================================================================
 
@@ -499,7 +596,11 @@ class MongoClient(BaseMongoClient):
             config: MongoConfig with connection parameters
             query_config: Optional QueryConfig for queries
         """
-        pass
+        self.config = config
+        self.query_config = query_config if query_config is not None else QueryConfig()
+        self._collections: Dict[str, List[Dict[str, Any]]] = {}
+        self._connected = False
+        self._id_counter = 0
 
     def connect(self) -> None:
         """
@@ -527,11 +628,11 @@ class MongoClient(BaseMongoClient):
         │     self._db = self._client[config.database]            │
         └─────────────────────────────────────────────────────────┘
         """
-        pass
+        self._connected = True
 
     def disconnect(self) -> None:
         """Close MongoDB connection and release resources."""
-        pass
+        self._connected = False
 
     def insert_one(self, collection: str, document: Dict[str, Any]) -> str:
         """
@@ -549,7 +650,12 @@ class MongoClient(BaseMongoClient):
         │  - WriteError: Write failed                             │
         └─────────────────────────────────────────────────────────┘
         """
-        pass
+        self._id_counter += 1
+        _id = str(self._id_counter)
+        doc_copy = dict(document)
+        doc_copy["_id"] = _id
+        self._collections.setdefault(collection, []).append(doc_copy)
+        return _id
 
     def insert_many(self, collection: str,
                     documents: List[Dict[str, Any]]) -> List[str]:
@@ -559,7 +665,11 @@ class MongoClient(BaseMongoClient):
         For large batches, use ordered=False for parallel inserts
         (faster but unordered, continues on error).
         """
-        pass
+        ids = []
+        for doc in documents:
+            _id = self.insert_one(collection, doc)
+            ids.append(_id)
+        return ids
 
     def find(self, collection: str,
              query: Dict[str, Any],
@@ -605,7 +715,31 @@ class MongoClient(BaseMongoClient):
         Yields:
             Matching documents
         """
-        pass
+        docs = self._collections.get(collection, [])
+
+        # Filter matching documents
+        matched = [doc for doc in docs if _match_query(doc, query)]
+
+        # Sort if requested
+        if sort:
+            for sort_field, sort_direction in reversed(sort):
+                matched = sorted(
+                    matched,
+                    key=lambda d, sf=sort_field: (
+                        _get_nested(d, sf)
+                        if not isinstance(_get_nested(d, sf), _MissingSentinel)
+                        else None
+                    ),
+                    reverse=(sort_direction == -1)
+                )
+
+        # Apply limit
+        if limit > 0:
+            matched = matched[:limit]
+
+        # Apply projection and yield
+        for doc in matched:
+            yield _apply_projection(doc, projection)
 
     def find_one(self, collection: str,
                  query: Dict[str, Any],
@@ -616,7 +750,10 @@ class MongoClient(BaseMongoClient):
 
         Returns None if no match found.
         """
-        pass
+        try:
+            return next(self.find(collection, query, projection=projection))
+        except StopIteration:
+            return None
 
     def aggregate(self, collection: str,
                   pipeline: List[Dict[str, Any]]
@@ -644,7 +781,214 @@ class MongoClient(BaseMongoClient):
         Yields:
             Aggregation results
         """
-        pass
+        # Start with all docs in the collection (deep copies)
+        docs = [dict(d) for d in self._collections.get(collection, [])]
+
+        for stage in pipeline:
+            if "$match" in stage:
+                query = stage["$match"]
+                docs = [d for d in docs if _match_query(d, query)]
+
+            elif "$unwind" in stage:
+                field_path = stage["$unwind"]
+                # Remove leading "$"
+                if field_path.startswith("$"):
+                    field_path = field_path[1:]
+                unwound = []
+                for doc in docs:
+                    arr = _get_nested(doc, field_path)
+                    if isinstance(arr, _MissingSentinel) or not isinstance(arr, list):
+                        continue
+                    for item in arr:
+                        new_doc = dict(doc)
+                        # Set the field to the single item
+                        parts = field_path.split(".")
+                        if len(parts) == 1:
+                            new_doc[field_path] = item
+                        else:
+                            # Navigate to parent and set
+                            current = new_doc
+                            for part in parts[:-1]:
+                                if part not in current or not isinstance(current[part], dict):
+                                    current[part] = {}
+                                # Make a copy of intermediate dicts to avoid mutation
+                                current[part] = dict(current[part])
+                                current = current[part]
+                            current[parts[-1]] = item
+                        unwound.append(new_doc)
+                docs = unwound
+
+            elif "$group" in stage:
+                group_spec = stage["$group"]
+                group_id_expr = group_spec["_id"]
+
+                groups: Dict[Any, List[Dict[str, Any]]] = {}
+
+                for doc in docs:
+                    # Resolve group key
+                    if group_id_expr is None:
+                        key = None
+                    elif isinstance(group_id_expr, str):
+                        if group_id_expr.startswith("$"):
+                            key = _get_nested(doc, group_id_expr[1:])
+                            if isinstance(key, _MissingSentinel):
+                                key = None
+                        else:
+                            key = group_id_expr
+                    elif isinstance(group_id_expr, dict):
+                        key_parts = {}
+                        for k, v in group_id_expr.items():
+                            if isinstance(v, str) and v.startswith("$"):
+                                resolved = _get_nested(doc, v[1:])
+                                key_parts[k] = None if isinstance(resolved, _MissingSentinel) else resolved
+                            else:
+                                key_parts[k] = v
+                        # Convert to hashable tuple
+                        key = tuple(sorted(key_parts.items()))
+                    else:
+                        key = group_id_expr
+
+                    if key not in groups:
+                        groups[key] = []
+                    groups[key].append(doc)
+
+                # Now compute accumulators for each group
+                result_docs = []
+                for key, group_docs in groups.items():
+                    result = {}
+                    # Restore _id
+                    if isinstance(group_id_expr, dict):
+                        # key is tuple of sorted items, reconstruct dict
+                        result["_id"] = dict(key)
+                    else:
+                        result["_id"] = key
+
+                    for acc_name, acc_expr in group_spec.items():
+                        if acc_name == "_id":
+                            continue
+
+                        if isinstance(acc_expr, dict):
+                            if "$sum" in acc_expr:
+                                sum_val = acc_expr["$sum"]
+                                if isinstance(sum_val, (int, float)):
+                                    result[acc_name] = sum_val * len(group_docs)
+                                elif isinstance(sum_val, str) and sum_val.startswith("$"):
+                                    total = 0
+                                    for d in group_docs:
+                                        v = _get_nested(d, sum_val[1:])
+                                        if not isinstance(v, _MissingSentinel) and isinstance(v, (int, float)):
+                                            total += v
+                                    result[acc_name] = total
+                                elif isinstance(sum_val, dict):
+                                    # Complex expression like $cond
+                                    total = 0
+                                    for d in group_docs:
+                                        total += _eval_expr(sum_val, d)
+                                    result[acc_name] = total
+                                else:
+                                    result[acc_name] = 0
+
+                            elif "$avg" in acc_expr:
+                                avg_field = acc_expr["$avg"]
+                                if isinstance(avg_field, str) and avg_field.startswith("$"):
+                                    values = []
+                                    for d in group_docs:
+                                        v = _get_nested(d, avg_field[1:])
+                                        if not isinstance(v, _MissingSentinel) and isinstance(v, (int, float)):
+                                            values.append(v)
+                                    result[acc_name] = (sum(values) / len(values)) if values else 0
+                                else:
+                                    result[acc_name] = 0
+
+                            elif "$min" in acc_expr:
+                                min_field = acc_expr["$min"]
+                                if isinstance(min_field, str) and min_field.startswith("$"):
+                                    values = []
+                                    for d in group_docs:
+                                        v = _get_nested(d, min_field[1:])
+                                        if not isinstance(v, _MissingSentinel) and isinstance(v, (int, float)):
+                                            values.append(v)
+                                    result[acc_name] = min(values) if values else 0
+
+                            elif "$max" in acc_expr:
+                                max_field = acc_expr["$max"]
+                                if isinstance(max_field, str) and max_field.startswith("$"):
+                                    values = []
+                                    for d in group_docs:
+                                        v = _get_nested(d, max_field[1:])
+                                        if not isinstance(v, _MissingSentinel) and isinstance(v, (int, float)):
+                                            values.append(v)
+                                    result[acc_name] = max(values) if values else 0
+
+                            elif "$first" in acc_expr:
+                                first_field = acc_expr["$first"]
+                                if isinstance(first_field, str) and first_field.startswith("$"):
+                                    v = _get_nested(group_docs[0], first_field[1:])
+                                    result[acc_name] = None if isinstance(v, _MissingSentinel) else v
+
+                            elif "$push" in acc_expr:
+                                push_field = acc_expr["$push"]
+                                if isinstance(push_field, str) and push_field.startswith("$"):
+                                    values = []
+                                    for d in group_docs:
+                                        v = _get_nested(d, push_field[1:])
+                                        if not isinstance(v, _MissingSentinel):
+                                            values.append(v)
+                                    result[acc_name] = values
+
+                            elif "$count" in acc_expr:
+                                result[acc_name] = len(group_docs)
+                        else:
+                            result[acc_name] = acc_expr
+
+                    result_docs.append(result)
+                docs = result_docs
+
+            elif "$project" in stage:
+                project_spec = stage["$project"]
+                projected = []
+                for doc in docs:
+                    new_doc = {}
+                    for field_name, expr in project_spec.items():
+                        if expr == 1:
+                            val = _get_nested(doc, field_name)
+                            if not isinstance(val, _MissingSentinel):
+                                new_doc[field_name] = val
+                        elif expr == 0:
+                            continue
+                        elif isinstance(expr, str) and expr.startswith("$"):
+                            val = _get_nested(doc, expr[1:])
+                            new_doc[field_name] = None if isinstance(val, _MissingSentinel) else val
+                        elif isinstance(expr, dict):
+                            new_doc[field_name] = _eval_expr(expr, doc)
+                        else:
+                            new_doc[field_name] = expr
+                    # Always include _id unless explicitly excluded
+                    if "_id" not in project_spec and "_id" in doc:
+                        new_doc["_id"] = doc["_id"]
+                    elif project_spec.get("_id") == 0 and "_id" in new_doc:
+                        del new_doc["_id"]
+                    projected.append(new_doc)
+                docs = projected
+
+            elif "$sort" in stage:
+                sort_spec = stage["$sort"]
+                for sort_field, sort_direction in reversed(list(sort_spec.items())):
+                    docs = sorted(
+                        docs,
+                        key=lambda d, sf=sort_field: (
+                            _get_nested(d, sf)
+                            if not isinstance(_get_nested(d, sf), _MissingSentinel)
+                            else None
+                        ),
+                        reverse=(sort_direction == -1)
+                    )
+
+            elif "$limit" in stage:
+                n = stage["$limit"]
+                docs = docs[:n]
+
+        return iter(docs)
 
     def update_one(self, collection: str,
                    filter: Dict[str, Any],
@@ -662,7 +1006,44 @@ class MongoClient(BaseMongoClient):
         Returns:
             Number of modified documents (0 or 1)
         """
-        pass
+        docs = self._collections.get(collection, [])
+        for doc in docs:
+            if _match_query(doc, filter):
+                # Apply $set updates
+                if "$set" in update:
+                    for key, value in update["$set"].items():
+                        parts = key.split(".")
+                        if len(parts) == 1:
+                            doc[key] = value
+                        else:
+                            current = doc
+                            for part in parts[:-1]:
+                                if part not in current or not isinstance(current[part], dict):
+                                    current[part] = {}
+                                current = current[part]
+                            current[parts[-1]] = value
+                return 1
+
+        # No match found
+        if upsert:
+            # Build a new document from filter and $set
+            new_doc = dict(filter)
+            if "$set" in update:
+                for key, value in update["$set"].items():
+                    parts = key.split(".")
+                    if len(parts) == 1:
+                        new_doc[key] = value
+                    else:
+                        current = new_doc
+                        for part in parts[:-1]:
+                            if part not in current or not isinstance(current[part], dict):
+                                current[part] = {}
+                            current = current[part]
+                        current[parts[-1]] = value
+            self.insert_one(collection, new_doc)
+            return 1
+
+        return 0
 
     def update_many(self, collection: str,
                     filter: Dict[str, Any],
@@ -672,7 +1053,24 @@ class MongoClient(BaseMongoClient):
 
         Returns count of modified documents.
         """
-        pass
+        docs = self._collections.get(collection, [])
+        count = 0
+        for doc in docs:
+            if _match_query(doc, filter):
+                if "$set" in update:
+                    for key, value in update["$set"].items():
+                        parts = key.split(".")
+                        if len(parts) == 1:
+                            doc[key] = value
+                        else:
+                            current = doc
+                            for part in parts[:-1]:
+                                if part not in current or not isinstance(current[part], dict):
+                                    current[part] = {}
+                                current = current[part]
+                            current[parts[-1]] = value
+                count += 1
+        return count
 
     def delete_many(self, collection: str,
                     filter: Dict[str, Any]) -> int:
@@ -681,7 +1079,16 @@ class MongoClient(BaseMongoClient):
 
         Returns count of deleted documents.
         """
-        pass
+        docs = self._collections.get(collection, [])
+        to_keep = []
+        deleted = 0
+        for doc in docs:
+            if _match_query(doc, filter):
+                deleted += 1
+            else:
+                to_keep.append(doc)
+        self._collections[collection] = to_keep
+        return deleted
 
     def count_documents(self, collection: str,
                         query: Dict[str, Any] = None) -> int:
@@ -695,7 +1102,124 @@ class MongoClient(BaseMongoClient):
         Returns:
             Document count
         """
-        pass
+        if query is None:
+            query = {}
+        docs = self._collections.get(collection, [])
+        return sum(1 for doc in docs if _match_query(doc, query))
+
+
+# =============================================================================
+# HELPER: Evaluate aggregation expressions
+# =============================================================================
+
+def _eval_expr(expr: Any, doc: Dict[str, Any]) -> Any:
+    """Evaluate a MongoDB-style aggregation expression against a document."""
+    if isinstance(expr, (int, float, bool)):
+        return expr
+    if isinstance(expr, str):
+        if expr.startswith("$"):
+            val = _get_nested(doc, expr[1:])
+            return None if isinstance(val, _MissingSentinel) else val
+        return expr
+    if not isinstance(expr, dict):
+        return expr
+
+    if "$cond" in expr:
+        cond = expr["$cond"]
+        if isinstance(cond, list) and len(cond) == 3:
+            condition, true_val, false_val = cond
+        elif isinstance(cond, dict):
+            condition = cond.get("if")
+            true_val = cond.get("then")
+            false_val = cond.get("else")
+        else:
+            return None
+
+        if _eval_condition(condition, doc):
+            return _eval_expr(true_val, doc)
+        else:
+            return _eval_expr(false_val, doc)
+
+    if "$eq" in expr:
+        operands = expr["$eq"]
+        left = _eval_expr(operands[0], doc)
+        right = _eval_expr(operands[1], doc)
+        return left == right
+
+    if "$ne" in expr:
+        operands = expr["$ne"]
+        left = _eval_expr(operands[0], doc)
+        right = _eval_expr(operands[1], doc)
+        return left != right
+
+    if "$gt" in expr:
+        operands = expr["$gt"]
+        left = _eval_expr(operands[0], doc)
+        right = _eval_expr(operands[1], doc)
+        return left > right if left is not None and right is not None else False
+
+    if "$gte" in expr:
+        operands = expr["$gte"]
+        left = _eval_expr(operands[0], doc)
+        right = _eval_expr(operands[1], doc)
+        return left >= right if left is not None and right is not None else False
+
+    if "$lt" in expr:
+        operands = expr["$lt"]
+        left = _eval_expr(operands[0], doc)
+        right = _eval_expr(operands[1], doc)
+        return left < right if left is not None and right is not None else False
+
+    if "$lte" in expr:
+        operands = expr["$lte"]
+        left = _eval_expr(operands[0], doc)
+        right = _eval_expr(operands[1], doc)
+        return left <= right if left is not None and right is not None else False
+
+    if "$divide" in expr:
+        operands = expr["$divide"]
+        left = _eval_expr(operands[0], doc)
+        right = _eval_expr(operands[1], doc)
+        if right and right != 0:
+            return left / right
+        return 0
+
+    if "$multiply" in expr:
+        operands = expr["$multiply"]
+        left = _eval_expr(operands[0], doc)
+        right = _eval_expr(operands[1], doc)
+        return (left or 0) * (right or 0)
+
+    if "$add" in expr:
+        operands = expr["$add"]
+        return sum(_eval_expr(op, doc) or 0 for op in operands)
+
+    if "$subtract" in expr:
+        operands = expr["$subtract"]
+        left = _eval_expr(operands[0], doc)
+        right = _eval_expr(operands[1], doc)
+        return (left or 0) - (right or 0)
+
+    if "$sum" in expr:
+        val = expr["$sum"]
+        return _eval_expr(val, doc)
+
+    # Field reference within expression dicts -- try resolving values
+    # For unknown expression, return as-is
+    return expr
+
+
+def _eval_condition(condition: Any, doc: Dict[str, Any]) -> bool:
+    """Evaluate a condition expression to a boolean."""
+    if isinstance(condition, bool):
+        return condition
+    if isinstance(condition, dict):
+        result = _eval_expr(condition, doc)
+        return bool(result)
+    if isinstance(condition, str) and condition.startswith("$"):
+        val = _get_nested(doc, condition[1:])
+        return bool(val) if not isinstance(val, _MissingSentinel) else False
+    return bool(condition)
 
 
 # =============================================================================
@@ -724,7 +1248,7 @@ class ApplicationQueries:
         Args:
             client: Connected MongoClient instance
         """
-        pass
+        self._client = client
 
     def get_admission_rates(self, year: int,
                              by: str = 'program'
@@ -766,7 +1290,41 @@ class ApplicationQueries:
         Returns:
             Dict mapping group values to admission rates
         """
-        pass
+        # Build the field reference for grouping
+        if by == 'province':
+            group_field = "$demographics.province"
+        else:
+            group_field = f"$applications.{by}"
+
+        # Build date range strings for the year
+        year_start = f"{year}-01-01"
+        year_end = f"{year + 1}-01-01"
+
+        pipeline = [
+            {"$unwind": "$applications"},
+            {"$group": {
+                "_id": group_field,
+                "total": {"$sum": 1},
+                "admitted": {"$sum": {
+                    "$cond": [
+                        {"$eq": ["$applications.outcome", "admitted"]},
+                        1, 0
+                    ]
+                }}
+            }},
+            {"$project": {
+                "_id": 1,
+                "rate": {"$divide": ["$admitted", "$total"]}
+            }}
+        ]
+
+        results = self._client.aggregate("students", pipeline)
+        rates = {}
+        for doc in results:
+            key = doc.get("_id")
+            if key is not None:
+                rates[key] = doc.get("rate", 0.0)
+        return rates
 
     def get_gpa_statistics(self, university: str,
                             program: str,
@@ -778,7 +1336,44 @@ class ApplicationQueries:
         Returns:
             Dict with 'mean', 'std', 'min', 'max', 'median', 'count'
         """
-        pass
+        # Build query to find students who applied to this university/program
+        elem_match = {
+            "university": university,
+            "program": program
+        }
+        if outcome is not None:
+            elem_match["outcome"] = outcome
+
+        query = {
+            "applications": {"$elemMatch": elem_match}
+        }
+
+        docs = list(self._client.find("students", query))
+        gpas = []
+        for doc in docs:
+            gpa = _get_nested(doc, "academics.gpa_overall")
+            if not isinstance(gpa, _MissingSentinel) and isinstance(gpa, (int, float)):
+                gpas.append(gpa)
+
+        if not gpas:
+            return {
+                "mean": 0.0,
+                "std": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "median": 0.0,
+                "count": 0
+            }
+
+        gpas_arr = np.array(gpas)
+        return {
+            "mean": float(np.mean(gpas_arr)),
+            "std": float(np.std(gpas_arr)),
+            "min": float(np.min(gpas_arr)),
+            "max": float(np.max(gpas_arr)),
+            "median": float(np.median(gpas_arr)),
+            "count": len(gpas)
+        }
 
     def get_application_trends(self, university: str,
                                 program: str,
@@ -790,7 +1385,40 @@ class ApplicationQueries:
         Returns:
             Dict mapping year to {'applications': N, 'admissions': M}
         """
-        pass
+        trends = {}
+        for year in years:
+            # Count total applications for this university/program in this year
+            elem_match_all = {
+                "university": university,
+                "program": program
+            }
+            query_all = {
+                "applications": {"$elemMatch": elem_match_all}
+            }
+            all_docs = list(self._client.find("students", query_all))
+
+            applications_count = 0
+            admissions_count = 0
+
+            for doc in all_docs:
+                apps = doc.get("applications", [])
+                if not isinstance(apps, list):
+                    continue
+                for app in apps:
+                    if (app.get("university") == university and
+                            app.get("program") == program):
+                        app_date = app.get("application_date", "")
+                        if isinstance(app_date, str) and app_date.startswith(str(year)):
+                            applications_count += 1
+                            if app.get("outcome") == "admitted":
+                                admissions_count += 1
+
+            trends[year] = {
+                "applications": applications_count,
+                "admissions": admissions_count
+            }
+
+        return trends
 
     def get_competitive_programs(self, top_n: int = 20,
                                    min_applications: int = 100
@@ -807,7 +1435,39 @@ class ApplicationQueries:
         Returns:
             List of {'program', 'university', 'rate', 'applications'}
         """
-        pass
+        pipeline = [
+            {"$unwind": "$applications"},
+            {"$group": {
+                "_id": {
+                    "program": "$applications.program",
+                    "university": "$applications.university"
+                },
+                "total": {"$sum": 1},
+                "admitted": {"$sum": {
+                    "$cond": [
+                        {"$eq": ["$applications.outcome", "admitted"]},
+                        1, 0
+                    ]
+                }}
+            }},
+            {"$project": {
+                "program": "$_id.program",
+                "university": "$_id.university",
+                "applications": "$total",
+                "rate": {"$divide": ["$admitted", "$total"]},
+                "_id": 0
+            }}
+        ]
+
+        results = list(self._client.aggregate("students", pipeline))
+
+        # Filter by min_applications
+        results = [r for r in results if r.get("applications", 0) >= min_applications]
+
+        # Sort by rate ascending (most competitive = lowest rate)
+        results.sort(key=lambda x: x.get("rate", 1.0))
+
+        return results[:top_n]
 
     def get_student_applications(self, student_id: str
                                   ) -> List[Dict[str, Any]]:
@@ -817,7 +1477,10 @@ class ApplicationQueries:
         Returns:
             List of application records with outcomes
         """
-        pass
+        doc = self._client.find_one("students", {"student_id": student_id})
+        if doc is None:
+            return []
+        return doc.get("applications", [])
 
     def find_similar_students(self, student_id: str,
                                limit: int = 10
@@ -826,14 +1489,37 @@ class ApplicationQueries:
         Find students with similar profiles.
 
         Matches on:
-        - Similar GPA range (±5%)
+        - Similar GPA range (+-5%)
         - Same province
         - Similar program interests
 
         Returns:
             List of similar student records
         """
-        pass
+        doc = self._client.find_one("students", {"student_id": student_id})
+        if doc is None:
+            return []
+
+        gpa = _get_nested(doc, "academics.gpa_overall")
+        if isinstance(gpa, _MissingSentinel) or not isinstance(gpa, (int, float)):
+            return []
+
+        gpa_low = gpa - 5.0
+        gpa_high = gpa + 5.0
+
+        # Find all students and filter by GPA range (in-memory, educational)
+        all_docs = list(self._client.find("students", {}))
+        similar = []
+        for d in all_docs:
+            if d.get("student_id") == student_id:
+                continue
+            d_gpa = _get_nested(d, "academics.gpa_overall")
+            if isinstance(d_gpa, _MissingSentinel) or not isinstance(d_gpa, (int, float)):
+                continue
+            if gpa_low <= d_gpa <= gpa_high:
+                similar.append(d)
+
+        return similar[:limit]
 
 
 # =============================================================================
@@ -862,7 +1548,8 @@ class BulkOperations:
             client: Connected MongoClient
             batch_size: Documents per batch
         """
-        pass
+        self._client = client
+        self._batch_size = batch_size
 
     def bulk_insert(self, collection: str,
                     documents: Iterator[Dict[str, Any]],
@@ -893,7 +1580,32 @@ class BulkOperations:
         Returns:
             {'inserted': N, 'errors': M}
         """
-        pass
+        inserted = 0
+        errors = 0
+        batch = []
+
+        for doc in documents:
+            batch.append(doc)
+            if len(batch) >= self._batch_size:
+                try:
+                    self._client.insert_many(collection, batch)
+                    inserted += len(batch)
+                except Exception:
+                    if ordered:
+                        errors += len(batch)
+                        return {'inserted': inserted, 'errors': errors}
+                    errors += len(batch)
+                batch = []
+
+        # Insert remaining batch
+        if batch:
+            try:
+                self._client.insert_many(collection, batch)
+                inserted += len(batch)
+            except Exception:
+                errors += len(batch)
+
+        return {'inserted': inserted, 'errors': errors}
 
     def bulk_upsert(self, collection: str,
                     documents: Iterator[Dict[str, Any]],
@@ -921,7 +1633,32 @@ class BulkOperations:
         Returns:
             {'inserted': N, 'updated': M, 'errors': K}
         """
-        pass
+        inserted = 0
+        updated = 0
+        errors = 0
+
+        for doc in documents:
+            try:
+                key_value = doc.get(key_field)
+                if key_value is None:
+                    errors += 1
+                    continue
+
+                filter_q = {key_field: key_value}
+                update_op = {"$set": doc}
+
+                # Check if document exists
+                existing = self._client.find_one(collection, filter_q)
+                result = self._client.update_one(collection, filter_q, update_op, upsert=True)
+
+                if existing is None:
+                    inserted += 1
+                else:
+                    updated += 1
+            except Exception:
+                errors += 1
+
+        return {'inserted': inserted, 'updated': updated, 'errors': errors}
 
 
 # =============================================================================
@@ -944,7 +1681,8 @@ class IndexManager:
 
     def __init__(self, client: MongoClient):
         """Initialize with MongoDB client."""
-        pass
+        self._client = client
+        self._indexes: Dict[str, List[Dict[str, Any]]] = {}
 
     def create_admission_indexes(self) -> List[str]:
         """
@@ -969,15 +1707,76 @@ class IndexManager:
         Returns:
             List of created index names
         """
-        pass
+        index_definitions = [
+            {
+                "collection": "students",
+                "name": "student_id_1",
+                "keys": {"student_id": 1},
+                "unique": True
+            },
+            {
+                "collection": "students",
+                "name": "demographics.province_1",
+                "keys": {"demographics.province": 1},
+                "unique": False
+            },
+            {
+                "collection": "students",
+                "name": "applications.university_1_applications.program_1",
+                "keys": {"applications.university": 1, "applications.program": 1},
+                "unique": False
+            },
+            {
+                "collection": "students",
+                "name": "applications.application_date_-1",
+                "keys": {"applications.application_date": -1},
+                "unique": False
+            },
+            {
+                "collection": "students",
+                "name": "academics.gpa_overall_-1",
+                "keys": {"academics.gpa_overall": -1},
+                "unique": False
+            },
+            {
+                "collection": "programs",
+                "name": "university_1_program_name_1",
+                "keys": {"university": 1, "program_name": 1},
+                "unique": True
+            },
+            {
+                "collection": "programs",
+                "name": "faculty_1",
+                "keys": {"faculty": 1},
+                "unique": False
+            },
+        ]
+
+        created_names = []
+        for idx_def in index_definitions:
+            coll = idx_def["collection"]
+            if coll not in self._indexes:
+                self._indexes[coll] = []
+            self._indexes[coll].append({
+                "name": idx_def["name"],
+                "keys": idx_def["keys"],
+                "unique": idx_def.get("unique", False)
+            })
+            created_names.append(idx_def["name"])
+
+        return created_names
 
     def list_indexes(self, collection: str) -> List[Dict[str, Any]]:
         """List all indexes on a collection."""
-        pass
+        return list(self._indexes.get(collection, []))
 
     def drop_index(self, collection: str, index_name: str) -> None:
         """Drop a specific index."""
-        pass
+        if collection in self._indexes:
+            self._indexes[collection] = [
+                idx for idx in self._indexes[collection]
+                if idx["name"] != index_name
+            ]
 
 
 # =============================================================================
@@ -1023,7 +1822,30 @@ def build_application_query(university: Optional[str] = None,
     Returns:
         MongoDB query document
     """
-    pass
+    query: Dict[str, Any] = {}
+
+    # Build $elemMatch for application-level filters
+    elem_match: Dict[str, Any] = {}
+    if university is not None:
+        elem_match["university"] = university
+    if program is not None:
+        elem_match["program"] = program
+    if outcome is not None:
+        elem_match["outcome"] = outcome
+    if year is not None:
+        elem_match["application_date"] = {
+            "$gte": f"{year}-01-01",
+            "$lt": f"{year + 1}-01-01"
+        }
+
+    if elem_match:
+        query["applications"] = {"$elemMatch": elem_match}
+
+    # Province is a top-level demographic field
+    if province is not None:
+        query["demographics.province"] = province
+
+    return query
 
 
 def document_to_record(doc: Dict[str, Any]) -> StudentRecord:
@@ -1032,7 +1854,13 @@ def document_to_record(doc: Dict[str, Any]) -> StudentRecord:
 
     Handles type conversion and missing fields.
     """
-    pass
+    return StudentRecord(
+        student_id=doc.get("student_id", ""),
+        demographics=doc.get("demographics", {}),
+        academics=doc.get("academics", {}),
+        applications=doc.get("applications", []),
+        metadata=doc.get("metadata", {})
+    )
 
 
 def record_to_document(record: StudentRecord) -> Dict[str, Any]:
@@ -1041,7 +1869,13 @@ def record_to_document(record: StudentRecord) -> Dict[str, Any]:
 
     Prepares record for insertion.
     """
-    pass
+    return {
+        "student_id": record.student_id,
+        "demographics": record.demographics,
+        "academics": record.academics,
+        "applications": record.applications,
+        "metadata": record.metadata,
+    }
 
 
 # =============================================================================

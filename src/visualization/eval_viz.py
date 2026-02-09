@@ -152,6 +152,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, Union
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 
 
 # =============================================================================
@@ -329,7 +333,54 @@ def plot_reliability_diagram(y_true: np.ndarray,
     - Expected value: E[Y | P(Y=1) ∈ bin b] ≈ mean predicted probability
     - If well-calibrated: actual_rate ≈ mean_pred (they should match!)
     """
-    pass
+    config = config or EvalPlotConfig()
+
+    mean_pred, actual_frac, counts = compute_calibration_curve(y_true, y_prob, n_bins)
+
+    if show_histogram and ax is None:
+        fig = plt.figure(figsize=config.figsize, dpi=config.dpi)
+        gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.3)
+        ax_cal = fig.add_subplot(gs[0])
+        ax_hist = fig.add_subplot(gs[1])
+    else:
+        if ax is None:
+            fig, ax_cal = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+        else:
+            ax_cal = ax
+            fig = ax_cal.figure
+        ax_hist = None
+
+    # Diagonal reference line
+    ax_cal.plot([0, 1], [0, 1], linestyle='--', color=config.diagonal_color,
+                label='Perfect calibration')
+
+    # Calibration curve
+    ax_cal.plot(mean_pred, actual_frac, 's-', color=config.neutral_color,
+                label='Model')
+
+    # Confidence intervals
+    if show_ci and len(counts) > 0:
+        ci = 1.96 * np.sqrt(actual_frac * (1.0 - actual_frac) / counts)
+        ax_cal.fill_between(mean_pred, actual_frac - ci, actual_frac + ci,
+                            alpha=config.ci_alpha, color=config.neutral_color)
+
+    ax_cal.set_xlabel('Mean Predicted Probability')
+    ax_cal.set_ylabel('Actual Fraction of Positives')
+    ax_cal.set_title('Reliability Diagram')
+    ax_cal.set_xlim([0, 1])
+    ax_cal.set_ylim([0, 1])
+    ax_cal.legend(loc='lower right')
+
+    # Histogram
+    if ax_hist is not None:
+        ax_hist.hist(y_prob, bins=n_bins, range=(0, 1), color=config.neutral_color,
+                     alpha=0.7, edgecolor='black')
+        ax_hist.set_xlabel('Predicted Probability')
+        ax_hist.set_ylabel('Count')
+        ax_hist.set_xlim([0, 1])
+
+    ax = ax_cal
+    return (fig, ax)
 
 
 def plot_calibration_comparison(models: Dict[str, Tuple[np.ndarray, np.ndarray]],
@@ -388,7 +439,30 @@ def plot_calibration_comparison(models: Dict[str, Tuple[np.ndarray, np.ndarray]]
     3. Add legend with model names
     4. Consider adding Brier score in legend: "Model (Brier=0.15)"
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    # Diagonal reference
+    ax.plot([0, 1], [0, 1], linestyle='--', color=config.diagonal_color,
+            label='Perfect calibration')
+
+    markers = ['s', 'o', '^', 'D', 'v', 'P']
+    for i, (name, (y_true, y_prob)) in enumerate(models.items()):
+        mean_pred, actual_frac, counts = compute_calibration_curve(y_true, y_prob, n_bins)
+        brier = float(np.mean((y_true - y_prob) ** 2))
+        color = config.model_colors[i % len(config.model_colors)]
+        marker = markers[i % len(markers)]
+        ax.plot(mean_pred, actual_frac, marker=marker, linestyle='-',
+                color=color, label=f'{name} (Brier={brier:.3f})')
+
+    ax.set_xlabel('Mean Predicted Probability')
+    ax.set_ylabel('Actual Fraction of Positives')
+    ax.set_title('Calibration Comparison')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
+    ax.legend(loc='lower right')
+
+    return (fig, ax)
 
 
 def plot_brier_decomposition(uncertainty: float,
@@ -475,7 +549,28 @@ def plot_brier_decomposition(uncertainty: float,
     4. Add verification: check if Brier ≈ UNC - RES + REL
     5. Consider horizontal layout with arrows showing decomposition
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    components = ['Uncertainty', 'Resolution', 'Reliability', 'Brier Score']
+    values = [uncertainty, resolution, reliability, brier_score]
+    colors = [config.neutral_color, config.good_color, config.bad_color, '#7f7f7f']
+
+    bars = ax.bar(components, values, color=colors, edgecolor='black', width=0.6)
+
+    # Annotate values on bars
+    for bar, val in zip(bars, values):
+        ax.text(bar.get_x() + bar.get_width() / 2.0, bar.get_height() + 0.005,
+                f'{val:.4f}', ha='center', va='bottom', fontsize=10)
+
+    title = 'Brier Score Decomposition'
+    if model_name:
+        title += f' - {model_name}'
+    ax.set_title(title)
+    ax.set_ylabel('Value')
+    ax.set_ylim(0, max(values) * 1.2 + 0.01)
+
+    return (fig, ax)
 
 
 def plot_expected_calibration_error(ece_values: Dict[str, float],
@@ -512,7 +607,25 @@ def plot_expected_calibration_error(ece_values: Dict[str, float],
     Returns:
         Tuple of (figure, axes)
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    names = list(ece_values.keys())
+    values = [ece_values[n] for n in names]
+    colors = [config.model_colors[i % len(config.model_colors)] for i in range(len(names))]
+
+    bars = ax.bar(names, values, color=colors, edgecolor='black', width=0.6)
+
+    for bar, val in zip(bars, values):
+        ax.text(bar.get_x() + bar.get_width() / 2.0, bar.get_height() + 0.001,
+                f'{val:.4f}', ha='center', va='bottom', fontsize=10)
+
+    ax.set_xlabel('Model')
+    ax.set_ylabel('Expected Calibration Error (ECE)')
+    ax.set_title('ECE Comparison')
+    ax.set_ylim(0, max(values) * 1.3 + 0.001)
+
+    return (fig, ax)
 
 
 # =============================================================================
@@ -606,7 +719,85 @@ def plot_roc_curve(y_true: np.ndarray,
        - Mark point at (fpr[optimal_idx], tpr[optimal_idx])
     6. Add legend with AUC value
     """
-    pass
+    config = config or EvalPlotConfig()
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+    else:
+        fig = ax.figure
+
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    # Compute ROC manually: sort by scores descending
+    desc_idx = np.argsort(-y_prob)
+    y_sorted = y_true[desc_idx]
+    scores_sorted = y_prob[desc_idx]
+
+    total_pos = np.sum(y_true == 1)
+    total_neg = np.sum(y_true == 0)
+
+    # Walk through sorted scores and compute cumulative TP and FP
+    tp = 0.0
+    fp = 0.0
+    tpr_list = [0.0]
+    fpr_list = [0.0]
+    thresholds_list = []
+    prev_score = None
+
+    for i in range(len(y_sorted)):
+        if prev_score is not None and scores_sorted[i] != prev_score:
+            tpr_val = tp / total_pos if total_pos > 0 else 0.0
+            fpr_val = fp / total_neg if total_neg > 0 else 0.0
+            tpr_list.append(tpr_val)
+            fpr_list.append(fpr_val)
+            thresholds_list.append(prev_score)
+        if y_sorted[i] == 1:
+            tp += 1
+        else:
+            fp += 1
+        prev_score = scores_sorted[i]
+
+    # Final point
+    tpr_list.append(tp / total_pos if total_pos > 0 else 0.0)
+    fpr_list.append(fp / total_neg if total_neg > 0 else 0.0)
+    if prev_score is not None:
+        thresholds_list.append(prev_score)
+
+    tpr_arr = np.array(tpr_list)
+    fpr_arr = np.array(fpr_list)
+
+    # Compute AUC using trapezoidal rule
+    auc_val = float(np.abs(np.trapz(tpr_arr, fpr_arr)))
+
+    # Plot ROC curve
+    label = 'ROC curve'
+    if show_auc:
+        label += f' (AUC = {auc_val:.3f})'
+    ax.plot(fpr_arr, tpr_arr, color=config.neutral_color, lw=2, label=label)
+
+    # Diagonal reference
+    ax.plot([0, 1], [0, 1], linestyle='--', color=config.diagonal_color,
+            label='Random (AUC = 0.5)')
+
+    # Optimal threshold (Youden's J)
+    if show_optimal_threshold and len(thresholds_list) > 0:
+        # Use the points that have corresponding thresholds (indices 1..len(thresholds_list))
+        j_scores = tpr_arr[1:len(thresholds_list) + 1] - fpr_arr[1:len(thresholds_list) + 1]
+        opt_idx = int(np.argmax(j_scores))
+        opt_fpr = fpr_arr[opt_idx + 1]
+        opt_tpr = tpr_arr[opt_idx + 1]
+        ax.plot(opt_fpr, opt_tpr, 'ro', markersize=10,
+                label=f'Optimal (t={thresholds_list[opt_idx]:.2f})')
+
+    ax.set_xlabel('False Positive Rate')
+    ax.set_ylabel('True Positive Rate')
+    ax.set_title('ROC Curve')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1.02])
+    ax.legend(loc='lower right')
+
+    return (fig, ax)
 
 
 def plot_roc_comparison(models: Dict[str, Tuple[np.ndarray, np.ndarray]],
@@ -647,7 +838,55 @@ def plot_roc_comparison(models: Dict[str, Tuple[np.ndarray, np.ndarray]],
     Returns:
         Tuple of (figure, axes)
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    for i, (name, (y_true, y_prob)) in enumerate(models.items()):
+        color = config.model_colors[i % len(config.model_colors)]
+        # Compute ROC for this model
+        y_true = np.asarray(y_true, dtype=float)
+        y_prob = np.asarray(y_prob, dtype=float)
+        desc_idx = np.argsort(-y_prob)
+        y_sorted = y_true[desc_idx]
+        total_pos = np.sum(y_true == 1)
+        total_neg = np.sum(y_true == 0)
+
+        tp = 0.0
+        fp = 0.0
+        tpr_list = [0.0]
+        fpr_list = [0.0]
+
+        scores_sorted = y_prob[desc_idx]
+        prev_score = None
+        for j in range(len(y_sorted)):
+            if prev_score is not None and scores_sorted[j] != prev_score:
+                tpr_list.append(tp / total_pos if total_pos > 0 else 0.0)
+                fpr_list.append(fp / total_neg if total_neg > 0 else 0.0)
+            if y_sorted[j] == 1:
+                tp += 1
+            else:
+                fp += 1
+            prev_score = scores_sorted[j]
+        tpr_list.append(tp / total_pos if total_pos > 0 else 0.0)
+        fpr_list.append(fp / total_neg if total_neg > 0 else 0.0)
+
+        tpr_arr = np.array(tpr_list)
+        fpr_arr = np.array(fpr_list)
+        auc_val = float(np.abs(np.trapz(tpr_arr, fpr_arr)))
+
+        ax.plot(fpr_arr, tpr_arr, color=color, lw=2,
+                label=f'{name} (AUC = {auc_val:.3f})')
+
+    ax.plot([0, 1], [0, 1], linestyle='--', color=config.diagonal_color,
+            label='Random (AUC = 0.5)')
+    ax.set_xlabel('False Positive Rate')
+    ax.set_ylabel('True Positive Rate')
+    ax.set_title('ROC Comparison')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1.02])
+    ax.legend(loc='lower right')
+
+    return (fig, ax)
 
 
 def plot_pr_curve(y_true: np.ndarray,
@@ -723,7 +962,68 @@ def plot_pr_curve(y_true: np.ndarray,
     4. Add baseline: horizontal line at y = positive_rate
     5. Add legend with AP value
     """
-    pass
+    config = config or EvalPlotConfig()
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+    else:
+        fig = ax.figure
+
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    # Compute PR curve manually from sorted scores
+    desc_idx = np.argsort(-y_prob)
+    y_sorted = y_true[desc_idx]
+    scores_sorted = y_prob[desc_idx]
+    total_pos = np.sum(y_true == 1)
+
+    tp = 0.0
+    fp = 0.0
+    precision_list = [1.0]
+    recall_list = [0.0]
+
+    prev_score = None
+    for i in range(len(y_sorted)):
+        if y_sorted[i] == 1:
+            tp += 1
+        else:
+            fp += 1
+        if prev_score is None or scores_sorted[i] != prev_score or i == len(y_sorted) - 1:
+            prec = tp / (tp + fp) if (tp + fp) > 0 else 1.0
+            rec = tp / total_pos if total_pos > 0 else 0.0
+            precision_list.append(prec)
+            recall_list.append(rec)
+        prev_score = scores_sorted[i]
+
+    precision_arr = np.array(precision_list)
+    recall_arr = np.array(recall_list)
+
+    # Compute average precision (area under PR curve)
+    # Sort by recall for proper integration
+    sort_idx = np.argsort(recall_arr)
+    recall_sorted = recall_arr[sort_idx]
+    precision_sorted = precision_arr[sort_idx]
+    ap = float(np.trapz(precision_sorted, recall_sorted))
+
+    label = 'PR curve'
+    if show_ap:
+        label += f' (AP = {ap:.3f})'
+    ax.plot(recall_arr, precision_arr, color=config.neutral_color, lw=2, label=label)
+
+    # Baseline: horizontal line at positive rate
+    pos_rate = total_pos / len(y_true) if len(y_true) > 0 else 0.5
+    ax.axhline(y=pos_rate, linestyle='--', color=config.diagonal_color,
+               label=f'Baseline ({pos_rate:.2f})')
+
+    ax.set_xlabel('Recall')
+    ax.set_ylabel('Precision')
+    ax.set_title('Precision-Recall Curve')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1.02])
+    ax.legend(loc='upper right')
+
+    return (fig, ax)
 
 
 def plot_lift_chart(y_true: np.ndarray,
@@ -787,7 +1087,41 @@ def plot_lift_chart(y_true: np.ndarray,
     4. Plot cumulative lift
     5. Add horizontal line at lift=1 (random baseline)
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    # Sort by predicted probability descending
+    desc_idx = np.argsort(-y_prob)
+    y_sorted = y_true[desc_idx]
+
+    overall_pos_rate = np.mean(y_true)
+    n = len(y_true)
+    bin_size = n // n_bins
+
+    percentages = []
+    lifts = []
+    for b in range(n_bins):
+        start = b * bin_size
+        end = start + bin_size if b < n_bins - 1 else n
+        bin_labels = y_sorted[start:end]
+        bin_pos_rate = np.mean(bin_labels) if len(bin_labels) > 0 else 0.0
+        lift = bin_pos_rate / overall_pos_rate if overall_pos_rate > 0 else 1.0
+        pct = (b + 1) / n_bins * 100
+        percentages.append(pct)
+        lifts.append(lift)
+
+    ax.plot(percentages, lifts, 's-', color=config.neutral_color, lw=2, label='Model')
+    ax.axhline(y=1.0, linestyle='--', color=config.diagonal_color, label='Random baseline')
+
+    ax.set_xlabel('% of Population (decile)')
+    ax.set_ylabel('Lift')
+    ax.set_title('Lift Chart')
+    ax.legend(loc='upper right')
+
+    return (fig, ax)
 
 
 def plot_cumulative_gains(y_true: np.ndarray,
@@ -834,7 +1168,41 @@ def plot_cumulative_gains(y_true: np.ndarray,
     Returns:
         Tuple of (figure, axes)
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    # Sort by predicted probability descending
+    desc_idx = np.argsort(-y_prob)
+    y_sorted = y_true[desc_idx]
+
+    total_pos = np.sum(y_true == 1)
+    n = len(y_true)
+
+    # Cumulative gains
+    cum_pos = np.cumsum(y_sorted)
+    pct_population = np.arange(1, n + 1) / n * 100
+    pct_positives = cum_pos / total_pos * 100 if total_pos > 0 else cum_pos
+
+    # Add origin
+    pct_population = np.concatenate([[0], pct_population])
+    pct_positives = np.concatenate([[0], pct_positives])
+
+    ax.plot(pct_population, pct_positives, color=config.neutral_color, lw=2,
+            label='Model')
+    ax.plot([0, 100], [0, 100], linestyle='--', color=config.diagonal_color,
+            label='Random')
+
+    ax.set_xlabel('% of Population Selected')
+    ax.set_ylabel('% of Positives Captured')
+    ax.set_title('Cumulative Gains Chart')
+    ax.set_xlim([0, 100])
+    ax.set_ylim([0, 105])
+    ax.legend(loc='lower right')
+
+    return (fig, ax)
 
 
 def plot_confusion_matrix(y_true: np.ndarray,
@@ -908,7 +1276,51 @@ def plot_confusion_matrix(y_true: np.ndarray,
     4. Add annotations with counts/percentages
     5. Color: TN/TP in green, FP/FN in red
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+
+    # Build 2x2 confusion matrix manually
+    cm = np.zeros((2, 2), dtype=float)
+    cm[0, 0] = np.sum((y_true == 0) & (y_pred == 0))  # TN
+    cm[0, 1] = np.sum((y_true == 0) & (y_pred == 1))  # FP
+    cm[1, 0] = np.sum((y_true == 1) & (y_pred == 0))  # FN
+    cm[1, 1] = np.sum((y_true == 1) & (y_pred == 1))  # TP
+
+    if normalize:
+        row_sums = cm.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1  # avoid div by zero
+        cm = cm / row_sums
+
+    # Plot as heatmap using imshow
+    im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
+    fig.colorbar(im, ax=ax)
+
+    # Labels
+    if labels is None:
+        labels = ['0', '1']
+
+    ax.set_xticks([0, 1])
+    ax.set_yticks([0, 1])
+    ax.set_xticklabels(labels)
+    ax.set_yticklabels(labels)
+    ax.set_xlabel('Predicted')
+    ax.set_ylabel('Actual')
+    ax.set_title('Confusion Matrix')
+
+    # Annotate cells
+    fmt = '.2f' if normalize else '.0f'
+    thresh = cm.max() / 2.0
+    for i in range(2):
+        for j in range(2):
+            ax.text(j, i, format(cm[i, j], fmt),
+                    ha='center', va='center',
+                    color='white' if cm[i, j] > thresh else 'black',
+                    fontsize=14)
+
+    return (fig, ax)
 
 
 # =============================================================================
@@ -986,7 +1398,48 @@ def plot_threshold_metrics(y_true: np.ndarray,
     5. Find and mark optimal threshold for each metric
     6. Add legend
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    if metrics is None:
+        metrics = ['precision', 'recall', 'f1']
+
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    thresholds = np.linspace(0.01, 0.99, 99)
+    total_pos = np.sum(y_true == 1)
+    total_neg = np.sum(y_true == 0)
+
+    results = {m: [] for m in metrics}
+    for t in thresholds:
+        y_pred = (y_prob >= t).astype(float)
+        tp = np.sum((y_pred == 1) & (y_true == 1))
+        fp = np.sum((y_pred == 1) & (y_true == 0))
+        fn = np.sum((y_pred == 0) & (y_true == 1))
+
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 1.0
+        rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+
+        metric_map = {'precision': prec, 'recall': rec, 'f1': f1}
+        for m in metrics:
+            results[m].append(metric_map.get(m, 0.0))
+
+    colors_map = {'precision': config.neutral_color, 'recall': config.good_color,
+                  'f1': config.bad_color}
+    for m in metrics:
+        color = colors_map.get(m, config.neutral_color)
+        ax.plot(thresholds, results[m], lw=2, label=m.capitalize(), color=color)
+
+    ax.set_xlabel('Threshold')
+    ax.set_ylabel('Metric Value')
+    ax.set_title('Metrics vs Classification Threshold')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1.02])
+    ax.legend(loc='best')
+
+    return (fig, ax)
 
 
 def plot_precision_recall_tradeoff(y_true: np.ndarray,
@@ -1039,7 +1492,63 @@ def plot_precision_recall_tradeoff(y_true: np.ndarray,
     Returns:
         Tuple of (figure, axes)
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    thresholds = np.linspace(0.01, 0.99, 99)
+
+    precision_list = []
+    recall_list = []
+    for t in thresholds:
+        y_pred = (y_prob >= t).astype(float)
+        tp = np.sum((y_pred == 1) & (y_true == 1))
+        fp = np.sum((y_pred == 1) & (y_true == 0))
+        fn = np.sum((y_pred == 0) & (y_true == 1))
+
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 1.0
+        rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        precision_list.append(prec)
+        recall_list.append(rec)
+
+    precision_arr = np.array(precision_list)
+    recall_arr = np.array(recall_list)
+
+    ax.plot(recall_arr, precision_arr, color=config.neutral_color, lw=2,
+            label='Precision-Recall')
+
+    # Mark target precision
+    if target_precision is not None:
+        # Find threshold where precision >= target_precision
+        valid = precision_arr >= target_precision
+        if np.any(valid):
+            # Among valid, pick the one with highest recall
+            idx = np.where(valid)[0]
+            best = idx[np.argmax(recall_arr[idx])]
+            ax.axhline(y=target_precision, linestyle=':', color=config.bad_color, alpha=0.7)
+            ax.plot(recall_arr[best], precision_arr[best], 'ro', markersize=10,
+                    label=f'Target Prec={target_precision:.2f} (Rec={recall_arr[best]:.2f})')
+
+    # Mark target recall
+    if target_recall is not None:
+        valid = recall_arr >= target_recall
+        if np.any(valid):
+            idx = np.where(valid)[0]
+            best = idx[np.argmax(precision_arr[idx])]
+            ax.axvline(x=target_recall, linestyle=':', color=config.good_color, alpha=0.7)
+            ax.plot(recall_arr[best], precision_arr[best], 'g^', markersize=10,
+                    label=f'Target Rec={target_recall:.2f} (Prec={precision_arr[best]:.2f})')
+
+    ax.set_xlabel('Recall')
+    ax.set_ylabel('Precision')
+    ax.set_title('Precision-Recall Tradeoff')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1.02])
+    ax.legend(loc='upper right')
+
+    return (fig, ax)
 
 
 # =============================================================================
@@ -1113,7 +1622,42 @@ def plot_subgroup_performance(metrics: Dict[str, Dict[str, float]],
     5. Add horizontal line at overall metric value
     6. Color bars by performance relative to overall
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    groups = list(metrics.keys())
+    values = [metrics[g].get(metric_name, 0.0) for g in groups]
+    colors = [config.model_colors[i % len(config.model_colors)] for i in range(len(groups))]
+
+    bars = ax.bar(groups, values, color=colors, edgecolor='black', width=0.6)
+
+    # Annotate values
+    for bar, val in zip(bars, values):
+        ax.text(bar.get_x() + bar.get_width() / 2.0, bar.get_height() + 0.005,
+                f'{val:.3f}', ha='center', va='bottom', fontsize=10)
+
+    # Show sample sizes below x-axis labels
+    if show_sample_size:
+        sample_labels = []
+        for g in groups:
+            n = metrics[g].get('n', None)
+            if n is not None:
+                sample_labels.append(f'{g}\n(n={int(n)})')
+            else:
+                sample_labels.append(g)
+        ax.set_xticks(range(len(groups)))
+        ax.set_xticklabels(sample_labels)
+
+    ax.set_ylabel(metric_name.upper())
+    ax.set_title(f'{metric_name.upper()} by Subgroup')
+
+    # Overall average line
+    overall = np.mean(values) if len(values) > 0 else 0.0
+    ax.axhline(y=overall, linestyle='--', color=config.diagonal_color,
+               label=f'Overall mean ({overall:.3f})')
+    ax.legend()
+
+    return (fig, ax)
 
 
 def plot_fairness_comparison(group_metrics: Dict[str, Dict[str, float]],
@@ -1172,7 +1716,38 @@ def plot_fairness_comparison(group_metrics: Dict[str, Dict[str, float]],
     Returns:
         Tuple of (figure, axes)
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    groups = list(group_metrics.keys())
+
+    # Determine fairness criteria from data if not provided
+    if fairness_criteria is None:
+        all_criteria = set()
+        for g in groups:
+            all_criteria.update(group_metrics[g].keys())
+        fairness_criteria = sorted(all_criteria)
+
+    n_groups = len(groups)
+    n_criteria = len(fairness_criteria)
+    x = np.arange(n_criteria)
+    width = 0.8 / n_groups if n_groups > 0 else 0.4
+
+    for i, group in enumerate(groups):
+        vals = [group_metrics[group].get(c, 0.0) for c in fairness_criteria]
+        color = config.model_colors[i % len(config.model_colors)]
+        offset = (i - n_groups / 2.0 + 0.5) * width
+        ax.bar(x + offset, vals, width, label=group, color=color, edgecolor='black')
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([c.replace('_', ' ').title() for c in fairness_criteria],
+                       rotation=30, ha='right')
+    ax.set_ylabel('Value')
+    ax.set_title('Fairness Comparison Across Groups')
+    ax.legend()
+
+    fig.tight_layout()
+    return (fig, ax)
 
 
 # =============================================================================
@@ -1236,7 +1811,22 @@ def plot_performance_over_time(metrics_by_period: Dict[str, List[float]],
     4. Add horizontal lines for baseline/target
     5. Consider secondary y-axis for sample size
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    markers = ['o', 's', '^', 'D', 'v', 'P']
+    for i, (metric_name, values) in enumerate(metrics_by_period.items()):
+        color = config.model_colors[i % len(config.model_colors)]
+        marker = markers[i % len(markers)]
+        ax.plot(period_labels[:len(values)], values, marker=marker, linestyle='-',
+                color=color, lw=2, label=metric_name)
+
+    ax.set_xlabel('Period')
+    ax.set_ylabel('Metric Value')
+    ax.set_title('Performance Over Time')
+    ax.legend(loc='best')
+
+    return (fig, ax)
 
 
 def plot_prediction_distribution(y_prob: np.ndarray,
@@ -1305,7 +1895,33 @@ def plot_prediction_distribution(y_prob: np.ndarray,
     5. Add legend if split by outcome
     6. Consider density=True for normalized comparison
     """
-    pass
+    config = config or EvalPlotConfig()
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    if by_outcome is not None:
+        by_outcome = np.asarray(by_outcome, dtype=float)
+        mask_neg = by_outcome == 0
+        mask_pos = by_outcome == 1
+
+        ax.hist(y_prob[mask_neg], bins=config.n_bins, range=(0, 1), alpha=0.5,
+                color=config.bad_color, edgecolor='black', label='Negative (0)',
+                density=True)
+        ax.hist(y_prob[mask_pos], bins=config.n_bins, range=(0, 1), alpha=0.5,
+                color=config.good_color, edgecolor='black', label='Positive (1)',
+                density=True)
+        ax.legend()
+    else:
+        ax.hist(y_prob, bins=config.n_bins, range=(0, 1), alpha=0.7,
+                color=config.neutral_color, edgecolor='black', density=True)
+
+    ax.set_xlabel('Predicted Probability')
+    ax.set_ylabel('Density')
+    ax.set_title('Prediction Distribution')
+    ax.set_xlim([0, 1])
+
+    return (fig, ax)
 
 
 # =============================================================================
@@ -1336,7 +1952,28 @@ def compute_calibration_curve(y_true: np.ndarray,
        - count = number of samples in bin
     4. Return arrays for non-empty bins only
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    bin_edges = np.linspace(0.0, 1.0, n_bins + 1)
+    # np.digitize returns 1..n_bins+1; clip to [1, n_bins]
+    bin_indices = np.digitize(y_prob, bin_edges[1:-1])  # 0..n_bins-1
+
+    mean_predicted = []
+    actual_fraction = []
+    bin_counts = []
+
+    for b in range(n_bins):
+        mask = bin_indices == b
+        count = int(np.sum(mask))
+        if count > 0:
+            mean_predicted.append(float(np.mean(y_prob[mask])))
+            actual_fraction.append(float(np.mean(y_true[mask])))
+            bin_counts.append(count)
+
+    return (np.array(mean_predicted),
+            np.array(actual_fraction),
+            np.array(bin_counts))
 
 
 def compute_brier_decomposition(y_true: np.ndarray,
@@ -1367,7 +2004,38 @@ def compute_brier_decomposition(y_true: np.ndarray,
     Reliability = (1/N) Σ_k n_k (f̄_k - ō_k)²
     Brier = Uncertainty - Resolution + Reliability
     """
-    pass
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+    N = len(y_true)
+
+    y_bar = np.mean(y_true)
+    uncertainty = y_bar * (1.0 - y_bar)
+
+    bin_edges = np.linspace(0.0, 1.0, n_bins + 1)
+    bin_indices = np.digitize(y_prob, bin_edges[1:-1])
+
+    resolution = 0.0
+    reliability = 0.0
+
+    for b in range(n_bins):
+        mask = bin_indices == b
+        n_k = int(np.sum(mask))
+        if n_k > 0:
+            o_k = np.mean(y_true[mask])
+            f_k = np.mean(y_prob[mask])
+            resolution += n_k * (o_k - y_bar) ** 2
+            reliability += n_k * (f_k - o_k) ** 2
+
+    resolution /= N
+    reliability /= N
+    brier = uncertainty - resolution + reliability
+
+    return {
+        'brier': brier,
+        'uncertainty': uncertainty,
+        'resolution': resolution,
+        'reliability': reliability,
+    }
 
 
 # =============================================================================

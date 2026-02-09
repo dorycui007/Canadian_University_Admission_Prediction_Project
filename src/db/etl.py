@@ -300,7 +300,7 @@ class BaseExtractor(ABC):
         Returns:
             Record count or None if unknown
         """
-        pass
+        return None
 
 
 class BaseTransformer(ABC):
@@ -336,7 +336,12 @@ class BaseTransformer(ABC):
         Default implementation calls transform() on each record.
         Override for batch-optimized processing.
         """
-        pass
+        results = []
+        for r in records:
+            t = self.transform(r)
+            if t is not None:
+                results.append(t)
+        return results
 
 
 class BaseLoader(ABC):
@@ -411,7 +416,7 @@ class CSVExtractor(BaseExtractor):
         Args:
             config: DataSourceConfig with file path and options
         """
-        pass
+        self._config = config
 
     def extract(self) -> Iterator[Dict[str, Any]]:
         """
@@ -439,15 +444,25 @@ class CSVExtractor(BaseExtractor):
         Yields:
             Dictionary for each row
         """
-        pass
+        import csv
+        with open(self._config.path, encoding=self._config.encoding) as f:
+            reader = csv.DictReader(f, delimiter=self._config.delimiter)
+            for row in reader:
+                yield dict(row)
 
     def validate_source(self) -> bool:
         """Check file exists and is readable."""
-        pass
+        import os
+        return os.path.isfile(self._config.path)
 
     def get_record_count(self) -> int:
         """Count lines in file (minus header)."""
-        pass
+        try:
+            with open(self._config.path, encoding=self._config.encoding) as f:
+                count = sum(1 for _ in f) - 1
+            return max(count, 0)
+        except (FileNotFoundError, OSError):
+            return 0
 
 
 class JSONExtractor(BaseExtractor):
@@ -469,15 +484,38 @@ class JSONExtractor(BaseExtractor):
             config: DataSourceConfig with file path
             record_path: JSONPath to array of records (e.g., 'data.students')
         """
-        pass
+        self._config = config
+        self._record_path = record_path
 
     def extract(self) -> Iterator[Dict[str, Any]]:
         """Extract records from JSON file."""
-        pass
+        import json
+        with open(self._config.path, encoding=self._config.encoding) as f:
+            data = json.load(f)
+
+        if self._record_path:
+            parts = self._record_path.split('.')
+            for part in parts:
+                data = data[part]
+
+        if isinstance(data, list):
+            for item in data:
+                yield item
+        elif isinstance(data, dict):
+            yield data
 
     def validate_source(self) -> bool:
         """Check file exists and is valid JSON."""
-        pass
+        import os
+        import json
+        if not os.path.isfile(self._config.path):
+            return False
+        try:
+            with open(self._config.path, encoding=self._config.encoding) as f:
+                json.load(f)
+            return True
+        except (json.JSONDecodeError, IOError):
+            return False
 
 
 class APIExtractor(BaseExtractor):
@@ -506,7 +544,9 @@ class APIExtractor(BaseExtractor):
             auth_token: Bearer token for authentication
             page_size: Records per page
         """
-        pass
+        self._config = config
+        self._auth_token = auth_token
+        self._page_size = page_size
 
     def extract(self) -> Iterator[Dict[str, Any]]:
         """
@@ -517,11 +557,48 @@ class APIExtractor(BaseExtractor):
         - Offset/limit pagination
         - Rate limiting with backoff
         """
-        pass
+        import urllib.request
+        import json
+
+        url = self._config.path
+
+        while url:
+            request = urllib.request.Request(url)
+            if self._auth_token:
+                request.add_header('Authorization', f'Bearer {self._auth_token}')
+
+            with urllib.request.urlopen(request) as response:
+                data = json.loads(response.read().decode(self._config.encoding))
+
+            if isinstance(data, list):
+                for item in data:
+                    yield item
+                url = None
+            elif isinstance(data, dict):
+                if 'data' in data:
+                    for item in data['data']:
+                        yield item
+                elif 'results' in data:
+                    for item in data['results']:
+                        yield item
+                else:
+                    yield data
+
+                url = data.get('next', None)
+            else:
+                url = None
 
     def validate_source(self) -> bool:
         """Check API is accessible."""
-        pass
+        import urllib.request
+        try:
+            request = urllib.request.Request(self._config.path)
+            if self._auth_token:
+                request.add_header('Authorization', f'Bearer {self._auth_token}')
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status == 200
+        except Exception:
+            return False
 
 
 # =============================================================================
@@ -554,7 +631,8 @@ class CleaningTransformer(BaseTransformer):
             type_map: Field name → type ('int', 'float', 'date', 'bool')
             null_values: Strings to treat as null
         """
-        pass
+        self._type_map = type_map or {}
+        self._null_values = null_values or ['', 'NA', 'N/A', 'null', 'None', 'n/a', 'na']
 
     def transform(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -566,15 +644,42 @@ class CleaningTransformer(BaseTransformer):
             3. Convert types according to type_map
             4. Return cleaned record
         """
-        pass
+        cleaned = dict(record)
+        for key, value in cleaned.items():
+            if isinstance(value, str):
+                value = value.strip()
+                if value in self._null_values:
+                    value = None
+            cleaned[key] = value
+            if key in self._type_map and value is not None:
+                cleaned[key] = self._convert_type(value, self._type_map[key])
+        return cleaned
 
     def _clean_string(self, value: Any) -> Optional[str]:
         """Clean and validate string value."""
-        pass
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return str(value)
+        result = value.strip()
+        if result in self._null_values:
+            return None
+        return result
 
     def _convert_type(self, value: Any, target_type: str) -> Any:
         """Convert value to target type."""
-        pass
+        try:
+            if target_type == 'int':
+                return int(value)
+            elif target_type == 'float':
+                return float(value)
+            elif target_type == 'bool':
+                return str(value).lower() in ('true', '1', 'yes')
+            elif target_type == 'date':
+                return value
+        except (ValueError, TypeError):
+            return value
+        return value
 
 
 class NormalizationTransformer(BaseTransformer):
@@ -612,7 +717,11 @@ class NormalizationTransformer(BaseTransformer):
             mapping_file: Path to JSON file with mappings
             mappings: Direct mapping dict (field → {raw: normalized})
         """
-        pass
+        self._mappings = mappings or {}
+        if mapping_file:
+            import json
+            with open(mapping_file) as f:
+                self._mappings = json.load(f)
 
     def transform(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -624,11 +733,28 @@ class NormalizationTransformer(BaseTransformer):
             3. If no mapping, keep original
             4. Return normalized record
         """
-        pass
+        result = dict(record)
+        for field_name in self._mappings:
+            if field_name in result:
+                result[field_name] = self._normalize_field(field_name, result[field_name])
+        return result
 
     def _normalize_field(self, field: str, value: str) -> str:
         """Normalize a single field value."""
-        pass
+        field_mappings = self._mappings.get(field, {})
+
+        # Try exact match first
+        if value in field_mappings:
+            return field_mappings[value]
+
+        # Try case-insensitive match
+        if isinstance(value, str):
+            lower_value = value.lower()
+            for raw, normalized in field_mappings.items():
+                if raw.lower() == lower_value:
+                    return normalized
+
+        return value
 
 
 class EnrichmentTransformer(BaseTransformer):
@@ -664,7 +790,8 @@ class EnrichmentTransformer(BaseTransformer):
             historical_data: Historical statistics for programs
             embedding_model: Model for generating embeddings
         """
-        pass
+        self._historical_data = historical_data or {}
+        self._embedding_model = embedding_model
 
     def transform(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -676,15 +803,35 @@ class EnrichmentTransformer(BaseTransformer):
             3. Add embeddings if model provided
             4. Return enriched record
         """
-        pass
+        result = dict(record)
+        self._add_historical_rate(result)
+        self._add_date_features(result)
+        return result
 
     def _add_historical_rate(self, record: Dict[str, Any]) -> None:
         """Add historical acceptance rate."""
-        pass
+        university = record.get('university', '')
+        program = record.get('program', '')
+        key = f"{university}_{program}"
+        if key in self._historical_data:
+            record['historical_admit_rate'] = self._historical_data[key]
 
     def _add_date_features(self, record: Dict[str, Any]) -> None:
         """Add date-derived features."""
-        pass
+        from datetime import datetime
+
+        app_date = record.get('application_date')
+        if app_date and isinstance(app_date, str):
+            formats = ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%Y/%m/%d',
+                        '%d-%m-%Y', '%m-%d-%Y', '%B %d, %Y', '%b %d, %Y']
+            for fmt in formats:
+                try:
+                    parsed = datetime.strptime(app_date, fmt)
+                    record['application_month'] = parsed.month
+                    record['application_year'] = parsed.year
+                    break
+                except ValueError:
+                    continue
 
 
 class ValidationTransformer(BaseTransformer):
@@ -718,7 +865,9 @@ class ValidationTransformer(BaseTransformer):
             rules: Validation rules configuration
             strict: If True, return None for invalid records
         """
-        pass
+        self._rules = rules or {}
+        self._strict = strict
+        self._required = self._rules.get('required', ['student_id', 'university', 'program'])
 
     def transform(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -731,19 +880,71 @@ class ValidationTransformer(BaseTransformer):
             4. If strict and invalid, return None
             5. Otherwise, add '_validation_errors' field
         """
-        pass
+        errors = []
+        errors.extend(self._validate_required(record))
+        errors.extend(self._validate_ranges(record))
+        errors.extend(self._validate_business_rules(record))
+
+        if self._strict and errors:
+            return None
+
+        result = dict(record)
+        if errors:
+            result['_validation_errors'] = errors
+        return result
 
     def _validate_required(self, record: Dict[str, Any]) -> List[str]:
         """Check required fields are present."""
-        pass
+        errors = []
+        for field_name in self._required:
+            if field_name not in record or record[field_name] is None:
+                errors.append(f"Missing required field: {field_name}")
+        return errors
 
     def _validate_ranges(self, record: Dict[str, Any]) -> List[str]:
         """Check value ranges."""
-        pass
+        errors = []
+
+        # Check GPA fields
+        for gpa_field in ['gpa', 'gpa_overall']:
+            if gpa_field in record and record[gpa_field] is not None:
+                try:
+                    gpa_val = float(record[gpa_field])
+                    if gpa_val < 0 or gpa_val > 100:
+                        errors.append(f"{gpa_field} value {gpa_val} out of range 0-100")
+                except (ValueError, TypeError):
+                    pass
+
+        # Check year fields
+        for key, value in record.items():
+            if 'year' in key.lower() and value is not None:
+                try:
+                    year_val = int(value)
+                    if year_val < 2015 or year_val > 2030:
+                        errors.append(f"{key} value {year_val} out of range 2015-2030")
+                except (ValueError, TypeError):
+                    pass
+
+        return errors
 
     def _validate_business_rules(self, record: Dict[str, Any]) -> List[str]:
         """Check business logic rules."""
-        pass
+        errors = []
+
+        # Check outcome is valid
+        valid_outcomes = {'admitted', 'rejected', 'waitlisted', None}
+        outcome = record.get('outcome')
+        if outcome is not None and outcome not in valid_outcomes:
+            errors.append(f"Invalid outcome: {outcome}")
+
+        # Check decision_date >= application_date
+        decision_date = record.get('decision_date')
+        application_date = record.get('application_date')
+        if decision_date and application_date:
+            if str(decision_date) < str(application_date):
+                errors.append("decision_date is before application_date")
+
+        return errors
 
 
 # =============================================================================
@@ -777,7 +978,9 @@ class MongoLoader(BaseLoader):
             collection: Target collection name
             key_fields: Fields to use as upsert key
         """
-        pass
+        self._client = mongo_client
+        self._collection = collection
+        self._key_fields = key_fields
 
     def load(self, record: Dict[str, Any]) -> bool:
         """
@@ -789,7 +992,11 @@ class MongoLoader(BaseLoader):
             3. Upsert: update if exists, insert if not
             4. Return success status
         """
-        pass
+        if self._client is None:
+            return True
+        filter_dict = {k: record[k] for k in self._key_fields if k in record}
+        self._client.update_one(self._collection, filter_dict, {'$set': record}, upsert=True)
+        return True
 
     def load_batch(self, records: List[Dict[str, Any]]) -> int:
         """
@@ -797,11 +1004,15 @@ class MongoLoader(BaseLoader):
 
         Uses bulk write for efficiency.
         """
-        pass
+        count = sum(1 for r in records if self.load(r))
+        return count
 
     def exists(self, key: Dict[str, Any]) -> bool:
         """Check if record exists by key."""
-        pass
+        if self._client is None:
+            return False
+        result = self._client.find_one(self._collection, key)
+        return result is not None
 
 
 class WeaviateLoader(BaseLoader):
@@ -834,7 +1045,10 @@ class WeaviateLoader(BaseLoader):
             embedding_model: Model to generate embeddings
             id_field: Field to use as UUID
         """
-        pass
+        self._client = weaviate_client
+        self._class_name = class_name
+        self._embedding_model = embedding_model
+        self._id_field = id_field
 
     def load(self, record: Dict[str, Any]) -> bool:
         """
@@ -845,15 +1059,37 @@ class WeaviateLoader(BaseLoader):
             2. Extract properties for Weaviate
             3. Upsert object (using id_field as UUID)
         """
-        pass
+        properties = dict(record)
+
+        vector = None
+        if self._embedding_model:
+            text_fields = ['university', 'program', 'description']
+            text_parts = [str(properties.get(f, '')) for f in text_fields if f in properties]
+            text = ' '.join(text_parts)
+            if text.strip():
+                vector = self._embedding_model.encode(text)
+
+        try:
+            self._client.add_object(
+                self._class_name, properties, vector=vector
+            )
+            return True
+        except Exception:
+            return False
 
     def load_batch(self, records: List[Dict[str, Any]]) -> int:
         """Load batch with batch import."""
-        pass
+        count = sum(1 for r in records if self.load(r))
+        return count
 
     def exists(self, key: Dict[str, Any]) -> bool:
         """Check if object exists by ID."""
-        pass
+        try:
+            obj_id = key.get(self._id_field)
+            result = self._client.get_object(self._class_name, obj_id)
+            return result is not None
+        except Exception:
+            return False
 
 
 # =============================================================================
@@ -889,7 +1125,10 @@ class ETLPipeline:
         Args:
             config: ETLConfig with pipeline settings
         """
-        pass
+        self._config = config
+        self._extractors = []
+        self._transformers = []
+        self._loaders = []
 
     def add_extractor(self, extractor: BaseExtractor) -> 'ETLPipeline':
         """
@@ -897,7 +1136,8 @@ class ETLPipeline:
 
         Returns self for method chaining.
         """
-        pass
+        self._extractors.append(extractor)
+        return self
 
     def add_transformer(self, transformer: BaseTransformer) -> 'ETLPipeline':
         """
@@ -906,7 +1146,8 @@ class ETLPipeline:
         Transformers are applied in order added.
         Returns self for method chaining.
         """
-        pass
+        self._transformers.append(transformer)
+        return self
 
     def add_loader(self, loader: BaseLoader) -> 'ETLPipeline':
         """
@@ -914,7 +1155,8 @@ class ETLPipeline:
 
         Returns self for method chaining.
         """
-        pass
+        self._loaders.append(loader)
+        return self
 
     def run(self) -> ETLStats:
         """
@@ -937,7 +1179,38 @@ class ETLPipeline:
         Returns:
             ETLStats with processing statistics
         """
-        pass
+        import time
+
+        validation = self.validate()
+        if not validation.is_valid:
+            stats = ETLStats()
+            stats.errors = validation.errors
+            return stats
+
+        start = time.time()
+        stats = ETLStats()
+
+        for extractor in self._extractors:
+            batch = []
+            for record in extractor.extract():
+                stats.records_read += 1
+                batch.append(record)
+                if len(batch) >= self._config.batch_size:
+                    success, fail = self._process_batch(batch)
+                    stats.records_processed += success + fail
+                    stats.records_inserted += success
+                    stats.records_failed += fail
+                    batch = []
+
+            # Process remaining records
+            if batch:
+                success, fail = self._process_batch(batch)
+                stats.records_processed += success + fail
+                stats.records_inserted += success
+                stats.records_failed += fail
+
+        stats.duration_seconds = time.time() - start
+        return stats
 
     def _process_batch(self, records: List[Dict[str, Any]]
                        ) -> Tuple[int, int]:
@@ -947,7 +1220,29 @@ class ETLPipeline:
         Returns:
             (successful_count, failed_count)
         """
-        pass
+        success = 0
+        fail = 0
+
+        for record in records:
+            transformed = self._apply_transformers(record)
+            if transformed is None:
+                fail += 1
+                continue
+
+            loaded = False
+            for loader in self._loaders:
+                try:
+                    if loader.load(transformed):
+                        loaded = True
+                except Exception:
+                    pass
+
+            if loaded:
+                success += 1
+            else:
+                fail += 1
+
+        return (success, fail)
 
     def _apply_transformers(self, record: Dict[str, Any]
                             ) -> Optional[Dict[str, Any]]:
@@ -956,7 +1251,11 @@ class ETLPipeline:
 
         Returns None if any transformer returns None (skip record).
         """
-        pass
+        for transformer in self._transformers:
+            record = transformer.transform(record)
+            if record is None:
+                return None
+        return record
 
     def validate(self) -> ValidationResult:
         """
@@ -968,7 +1267,13 @@ class ETLPipeline:
         - Source accessibility
         - Schema compatibility
         """
-        pass
+        errors = []
+        if len(self._extractors) == 0:
+            errors.append({'error': 'No extractors configured'})
+        if len(self._loaders) == 0:
+            errors.append({'error': 'No loaders configured'})
+
+        return ValidationResult(is_valid=len(errors) == 0, errors=errors)
 
 
 # =============================================================================
@@ -995,7 +1300,19 @@ def create_admission_etl(mongo_client,
     │  2. WeaviateLoader - Store embeddings (optional)            │
     └─────────────────────────────────────────────────────────────┘
     """
-    pass
+    pipeline = ETLPipeline(ETLConfig())
+
+    pipeline.add_transformer(CleaningTransformer())
+    pipeline.add_transformer(NormalizationTransformer())
+    pipeline.add_transformer(ValidationTransformer())
+
+    pipeline.add_loader(MongoLoader(mongo_client, 'students', ['student_id']))
+
+    if weaviate_client:
+        pipeline.add_loader(WeaviateLoader(weaviate_client, 'Student',
+                                            embedding_model=embedding_model))
+
+    return pipeline
 
 
 def run_incremental_load(pipeline: ETLPipeline,
@@ -1005,7 +1322,7 @@ def run_incremental_load(pipeline: ETLPipeline,
 
     For daily/hourly updates rather than full reload.
     """
-    pass
+    return pipeline.run()
 
 
 # =============================================================================

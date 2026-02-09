@@ -258,7 +258,22 @@ def householder_vector(x: np.ndarray) -> np.ndarray:
 
     MAT223 Reference: Section 4.7
     """
-    pass
+    x = np.asarray(x, dtype=float)
+    norm_x = np.linalg.norm(x)
+    if norm_x < 1e-10:
+        # Zero vector edge case: return a unit vector e1
+        e1 = np.zeros_like(x)
+        e1[0] = 1.0
+        return e1
+    sign_x1 = 1.0 if x[0] >= 0 else -1.0
+    e1 = np.zeros_like(x)
+    e1[0] = 1.0
+    v = x + sign_x1 * norm_x * e1
+    v_norm = np.linalg.norm(v)
+    if v_norm < 1e-10:
+        # This can happen if x is already aligned with -e1
+        return e1
+    return v / v_norm
 
 
 def apply_householder(H_v: np.ndarray, A: np.ndarray) -> np.ndarray:
@@ -283,7 +298,8 @@ def apply_householder(H_v: np.ndarray, A: np.ndarray) -> np.ndarray:
     vTA = v.T @ A              # (n,) - project columns onto v
     return A - 2 * np.outer(v, vTA)  # subtract 2× projection
     """
-    pass
+    vTA = H_v @ A  # (n,) - dot product of v with each column of A
+    return A - 2.0 * np.outer(H_v, vTA)
 
 
 def qr_householder(A: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -347,7 +363,21 @@ def qr_householder(A: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
     MAT223 Reference: Section 4.7
     """
-    pass
+    A = np.asarray(A, dtype=float)
+    m, n = A.shape
+    Q = np.eye(m)
+    R = A.copy()
+    for j in range(min(m, n)):
+        x = R[j:, j].copy()
+        v = householder_vector(x)
+        # Apply H to R[j:, j:]
+        R[j:, j:] = apply_householder(v, R[j:, j:])
+        # Apply H to Q[:, j:]  (Q = Q @ H_j, so Q[:, j:] = Q[:, j:] @ H)
+        # H is symmetric, so Q @ H = Q @ (I - 2vv^T)
+        # Q[:, j:] = Q[:, j:] - 2 * (Q[:, j:] @ v) @ v^T
+        Qv = Q[:, j:] @ v  # shape (m,)
+        Q[:, j:] = Q[:, j:] - 2.0 * np.outer(Qv, v)
+    return Q, R
 
 
 def qr_reduced(A: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -405,7 +435,13 @@ def qr_reduced(A: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     Q, R = np.linalg.qr(A, mode='reduced')
     return Q, R
     """
-    pass
+    A = np.asarray(A, dtype=float)
+    m, n = A.shape
+    k = min(m, n)
+    Q_full, R_full = qr_householder(A)
+    Q1 = Q_full[:, :k]
+    R1 = R_full[:k, :]
+    return Q1, R1
 
 
 def back_substitution(R: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -462,7 +498,15 @@ def back_substitution(R: np.ndarray, b: np.ndarray) -> np.ndarray:
            x[i] = (b[i] - R[i, i+1:] @ x[i+1:]) / R[i, i]
     4. return x
     """
-    pass
+    R = np.asarray(R, dtype=float)
+    b = np.asarray(b, dtype=float)
+    n = len(b)
+    x = np.zeros(n)
+    for i in range(n - 1, -1, -1):
+        if abs(R[i, i]) < 1e-10:
+            raise ValueError("Singular matrix: zero diagonal element in R")
+        x[i] = (b[i] - R[i, i+1:] @ x[i+1:]) / R[i, i]
+    return x
 
 
 def solve_via_qr(X: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -526,7 +570,12 @@ def solve_via_qr(X: np.ndarray, y: np.ndarray) -> np.ndarray:
 
     MAT223 Reference: Section 4.8
     """
-    pass
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=float)
+    Q, R = qr_reduced(X)
+    c = Q.T @ y
+    beta = back_substitution(R, c)
+    return beta
 
 
 def solve_weighted_via_qr(
@@ -592,7 +641,20 @@ def solve_weighted_via_qr(
            X_aug, z_aug = X_tilde, z_tilde
     5. return solve_via_qr(X_aug, z_aug)
     """
-    pass
+    X = np.asarray(X, dtype=float)
+    z = np.asarray(z, dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    n, p = X.shape
+    sqrt_w = np.sqrt(weights)
+    X_tilde = sqrt_w[:, None] * X
+    z_tilde = sqrt_w * z
+    if lambda_ > 0:
+        X_aug = np.vstack([X_tilde, np.sqrt(lambda_) * np.eye(p)])
+        z_aug = np.concatenate([z_tilde, np.zeros(p)])
+    else:
+        X_aug = X_tilde
+        z_aug = z_tilde
+    return solve_via_qr(X_aug, z_aug)
 
 
 def check_qr_factorization(A: np.ndarray, Q: np.ndarray, R: np.ndarray,
@@ -622,7 +684,38 @@ def check_qr_factorization(A: np.ndarray, Q: np.ndarray, R: np.ndarray,
     3. Check all entries below diagonal of R are < tol
     4. Return results dict
     """
-    pass
+    A = np.asarray(A, dtype=float)
+    Q = np.asarray(Q, dtype=float)
+    R = np.asarray(R, dtype=float)
+
+    # Check factorization: A ≈ QR
+    reconstruction_error = np.linalg.norm(A - Q @ R)
+    factorization_correct = reconstruction_error < tol
+
+    # Check Q orthogonality: Q^T Q ≈ I
+    m = Q.shape[1]
+    orthogonality_error = np.linalg.norm(Q.T @ Q - np.eye(m))
+    q_orthogonal = orthogonality_error < tol
+
+    # Check R is upper triangular
+    r_upper_triangular = True
+    for i in range(R.shape[0]):
+        for j in range(min(i, R.shape[1])):
+            if abs(R[i, j]) > tol:
+                r_upper_triangular = False
+                break
+        if not r_upper_triangular:
+            break
+
+    return {
+        'factorization_correct': factorization_correct,
+        'Q_orthogonal': q_orthogonal,
+        'R_upper_triangular': r_upper_triangular,
+        'errors': {
+            'reconstruction_error': reconstruction_error,
+            'orthogonality_error': orthogonality_error,
+        }
+    }
 
 
 # =============================================================================

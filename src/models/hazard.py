@@ -204,7 +204,7 @@ from typing import Dict, Any, Optional, Tuple, List
 from dataclasses import dataclass
 
 # Will import from logistic once implemented
-# from .logistic import LogisticModel, sigmoid
+from .logistic import LogisticModel, sigmoid
 
 
 @dataclass
@@ -239,7 +239,11 @@ class TimingPrediction:
 
     def summary(self) -> str:
         """Generate human-readable summary."""
-        pass
+        return (
+            f"Expected decision time: {self.expected_time:.1f}\n"
+            f"Median decision time: {self.median_time:.1f}\n"
+            f"80% CI: [{self.ci_80_lower:.1f}, {self.ci_80_upper:.1f}]"
+        )
 
 
 def expand_to_person_period(
@@ -304,7 +308,22 @@ def expand_to_person_period(
                Append one-hot for t to time_dummies
     4. Return arrays
     """
-    pass
+    n_samples, n_features = X.shape
+    total_rows = int(np.sum(event_times))
+
+    X_expanded = np.zeros((total_rows, n_features))
+    y_expanded = np.zeros(total_rows)
+    time_indices = np.zeros(total_rows, dtype=int)
+
+    row = 0
+    for i in range(n_samples):
+        for t in range(1, int(event_times[i]) + 1):
+            X_expanded[row] = X[i]
+            y_expanded[row] = 1.0 if t == event_times[i] else 0.0
+            time_indices[row] = t
+            row += 1
+
+    return X_expanded, y_expanded, time_indices
 
 
 def create_time_dummies(
@@ -343,7 +362,10 @@ def create_time_dummies(
         dummies[i, t - 1] = 1  # 0-indexed
     return dummies
     """
-    pass
+    dummies = np.zeros((len(time_indices), max_time))
+    for i, t in enumerate(time_indices):
+        dummies[i, t - 1] = 1.0
+    return dummies
 
 
 class HazardModel:
@@ -401,17 +423,23 @@ class HazardModel:
         self.covariate_effects = None  # β coefficients
         self._is_fitted = False
         """
-        pass
+        self.max_time = max_time
+        self.lambda_ = lambda_
+        self.max_iter = max_iter
+        self.tol = tol
+        self.baseline_hazards = None
+        self.covariate_effects = None
+        self._is_fitted = False
 
     @property
     def name(self) -> str:
         """Model name."""
-        pass
+        return "Discrete-Time Hazard Model"
 
     @property
     def is_fitted(self) -> bool:
         """Check if model is fitted."""
-        pass
+        return self._is_fitted
 
     def fit(
         self,
@@ -454,7 +482,23 @@ class HazardModel:
         7. self._is_fitted = True
         8. Return self
         """
-        pass
+        X_exp, y_exp, times = expand_to_person_period(X, event_times, self.max_time)
+        time_dummies = create_time_dummies(times, self.max_time)
+        X_full = np.hstack([time_dummies, X_exp])
+
+        logistic = LogisticModel(
+            lambda_=self.lambda_,
+            max_iter=self.max_iter,
+            tol=self.tol,
+            fit_intercept=False
+        )
+        logistic.fit(X_full, y_exp)
+
+        coefficients = logistic.coefficients
+        self.baseline_hazards = coefficients[:self.max_time]
+        self.covariate_effects = coefficients[self.max_time:]
+        self._is_fitted = True
+        return self
 
     def predict_hazard(
         self,
@@ -479,7 +523,17 @@ class HazardModel:
         linear = self.baseline_hazards[times - 1] + X @ self.covariate_effects
         return sigmoid(linear)
         """
-        pass
+        if not self._is_fitted:
+            return None
+
+        if times is None:
+            times = np.arange(1, self.max_time + 1)
+
+        # baseline_hazards[times - 1] has shape (n_times,)
+        # X @ covariate_effects has shape (n_samples,)
+        # We need shape (n_samples, n_times)
+        linear = self.baseline_hazards[times - 1] + (X @ self.covariate_effects)[:, np.newaxis]
+        return sigmoid(linear)
 
     def predict_survival(self, X: np.ndarray) -> np.ndarray:
         """
@@ -507,7 +561,11 @@ class HazardModel:
         survival = np.cumprod(1 - hazard, axis=1)
         return survival
         """
-        pass
+        if not self._is_fitted:
+            return None
+        hazard = self.predict_hazard(X)
+        survival = np.cumprod(1 - hazard, axis=1)
+        return survival
 
     def predict_event_prob(self, X: np.ndarray) -> np.ndarray:
         """
@@ -540,7 +598,14 @@ class HazardModel:
         event_prob = S_lagged * hazard
         return event_prob
         """
-        pass
+        if not self._is_fitted:
+            return None
+        hazard = self.predict_hazard(X)
+        survival = self.predict_survival(X)
+
+        S_lagged = np.hstack([np.ones((X.shape[0], 1)), survival[:, :-1]])
+        event_prob = S_lagged * hazard
+        return event_prob
 
     def predict_timing(self, X: np.ndarray) -> List[TimingPrediction]:
         """
@@ -602,7 +667,41 @@ class HazardModel:
 
         return predictions
         """
-        pass
+        if not self._is_fitted:
+            return None
+        hazard = self.predict_hazard(X)
+        survival = self.predict_survival(X)
+        event_prob = self.predict_event_prob(X)
+
+        predictions = []
+        times = np.arange(1, self.max_time + 1)
+
+        for i in range(X.shape[0]):
+            # Expected time
+            expected = np.sum(times * event_prob[i])
+
+            # Median: first t where S(t) <= 0.5
+            median_idx = np.searchsorted(-survival[i], -0.5)
+            median = float(times[min(median_idx, len(times) - 1)])
+
+            # 80% CI from event probability distribution
+            cumulative = np.cumsum(event_prob[i])
+            lower_idx = np.searchsorted(cumulative, 0.10)
+            upper_idx = np.searchsorted(cumulative, 0.90)
+            lower = float(times[min(lower_idx, len(times) - 1)])
+            upper = float(times[min(upper_idx, len(times) - 1)])
+
+            predictions.append(TimingPrediction(
+                survival_curve=survival[i],
+                hazard_curve=hazard[i],
+                event_probs=event_prob[i],
+                expected_time=expected,
+                median_time=median,
+                ci_80_lower=lower,
+                ci_80_upper=upper
+            ))
+
+        return predictions
 
     def predict_expected_time(self, X: np.ndarray) -> np.ndarray:
         """
@@ -620,7 +719,11 @@ class HazardModel:
         times = np.arange(1, self.max_time + 1)
         return event_prob @ times
         """
-        pass
+        if not self._is_fitted:
+            return None
+        event_prob = self.predict_event_prob(X)
+        times = np.arange(1, self.max_time + 1)
+        return event_prob @ times
 
     def predict_median_time(self, X: np.ndarray) -> np.ndarray:
         """
@@ -632,7 +735,16 @@ class HazardModel:
         Returns:
             Median times (n_samples,)
         """
-        pass
+        if not self._is_fitted:
+            return None
+        survival = self.predict_survival(X)
+        times = np.arange(1, self.max_time + 1)
+        medians = np.zeros(X.shape[0])
+        for i in range(X.shape[0]):
+            # First t where survival <= 0.5
+            idx = np.searchsorted(-survival[i], -0.5)
+            medians[i] = times[min(idx, len(times) - 1)]
+        return medians
 
     def get_baseline_hazard_curve(self) -> np.ndarray:
         """
@@ -642,15 +754,38 @@ class HazardModel:
             Baseline hazards α_t converted to probabilities
             via sigmoid(α_t) for the "average" application.
         """
-        pass
+        if not self._is_fitted:
+            return None
+        return sigmoid(self.baseline_hazards)
 
     def get_params(self) -> Dict[str, Any]:
         """Get model parameters for serialization."""
-        pass
+        return {
+            'baseline_hazards': self.baseline_hazards.tolist() if self.baseline_hazards is not None else None,
+            'covariate_effects': self.covariate_effects.tolist() if self.covariate_effects is not None else None,
+            'max_time': self.max_time,
+            'lambda_': self.lambda_,
+            'max_iter': self.max_iter,
+            'tol': self.tol,
+            '_is_fitted': self._is_fitted,
+        }
 
     def set_params(self, params: Dict[str, Any]) -> None:
         """Set model parameters from serialization."""
-        pass
+        if 'baseline_hazards' in params and params['baseline_hazards'] is not None:
+            self.baseline_hazards = np.array(params['baseline_hazards'])
+        if 'covariate_effects' in params and params['covariate_effects'] is not None:
+            self.covariate_effects = np.array(params['covariate_effects'])
+        if 'max_time' in params:
+            self.max_time = params['max_time']
+        if 'lambda_' in params:
+            self.lambda_ = params['lambda_']
+        if 'max_iter' in params:
+            self.max_iter = params['max_iter']
+        if 'tol' in params:
+            self.tol = params['tol']
+        if '_is_fitted' in params:
+            self._is_fitted = params['_is_fitted']
 
 
 # =============================================================================

@@ -9,235 +9,6 @@ This module provides specialized encoding strategies for different feature
 types in the admission prediction pipeline. It complements design_matrix.py
 by providing domain-specific encoders for university admissions data.
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        ENCODER HIERARCHY                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│                    ┌─────────────────────────────────┐                      │
-│                    │     BaseEncoder (Abstract)      │                      │
-│                    │                                 │                      │
-│                    │  + fit(X) → self                │                      │
-│                    │  + transform(X) → array         │                      │
-│                    │  + inverse_transform(X)         │                      │
-│                    └───────────────┬─────────────────┘                      │
-│                                    │                                        │
-│         ┌──────────────────────────┼──────────────────────────┐            │
-│         │                          │                          │            │
-│         ▼                          ▼                          ▼            │
-│  ┌──────────────┐        ┌──────────────────┐       ┌─────────────────┐   │
-│  │ GPAEncoder   │        │ UniversityEncoder │       │ TermEncoder     │   │
-│  │              │        │                   │       │                 │   │
-│  │ Handles:     │        │ Handles:          │       │ Handles:        │   │
-│  │ - 4.0 scale  │        │ - 100+ unis       │       │ - Cyclical time │   │
-│  │ - % scale    │        │ - Hierarchical    │       │ - F/W/S terms   │   │
-│  │ - IB/AP      │        │ - Province groups │       │ - Year encoding │   │
-│  └──────────────┘        └──────────────────┘       └─────────────────┘   │
-│         │                          │                          │            │
-│         └──────────────────────────┼──────────────────────────┘            │
-│                                    ▼                                        │
-│                    ┌─────────────────────────────────┐                      │
-│                    │       DesignMatrixBuilder       │                      │
-│                    │     (features/design_matrix.py) │                      │
-│                    └─────────────────────────────────┘                      │
-│                                    │                                        │
-│                                    ▼                                        │
-│                    ┌─────────────────────────────────┐                      │
-│                    │           Models                │                      │
-│                    │  LogisticModel / EmbeddingModel │                      │
-│                    └─────────────────────────────────┘                      │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-
-==============================================================================
-DOMAIN-SPECIFIC ENCODING CHALLENGES
-==============================================================================
-
-University admissions data has unique encoding challenges:
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  CHALLENGE 1: GPA SCALE INCONSISTENCY                                       │
-│                                                                             │
-│  Different high schools use different grading scales:                       │
-│                                                                             │
-│  ┌────────────────┬────────────┬─────────────────┐                          │
-│  │ Scale Type     │ Range      │ Examples        │                          │
-│  ├────────────────┼────────────┼─────────────────┤                          │
-│  │ 4.0 Scale      │ 0.0 - 4.0  │ US high schools │                          │
-│  │ Percentage     │ 0 - 100    │ Ontario HS      │                          │
-│  │ Letter Grade   │ A+ to F    │ Some provinces  │                          │
-│  │ IB Score       │ 1 - 45     │ IB Diploma      │                          │
-│  │ AP Score       │ 1 - 5      │ Per course      │                          │
-│  └────────────────┴────────────┴─────────────────┘                          │
-│                                                                             │
-│  Solution: Normalize all to [0, 1] range before standardization             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  CHALLENGE 2: HIGH CARDINALITY CATEGORIES                                   │
-│                                                                             │
-│  - 100+ Canadian universities                                               │
-│  - 1000+ unique programs                                                    │
-│  - Long-tail distribution (few students per small program)                  │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  Program Application Counts (Log Scale)                             │    │
-│  │                                                                     │    │
-│  │  Count                                                              │    │
-│  │    │                                                                │    │
-│  │ 1K ┤ ██                                                             │    │
-│  │    │ ██                                                             │    │
-│  │500 ┤ ████                                                           │    │
-│  │    │ ██████                                                         │    │
-│  │100 ┤ ██████████                                                     │    │
-│  │    │ ████████████████                                               │    │
-│  │ 10 ┤ ████████████████████████████                                   │    │
-│  │    │ ████████████████████████████████████████████████████           │    │
-│  │  1 ┤─────────────────────────────────────────────────────           │    │
-│  │    └──────────────────────────────────────────────────────→         │    │
-│  │      Top 10      Top 50      Top 200        Long tail    Programs   │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                                                             │
-│  Solutions:                                                                 │
-│  1. Target encoding with regularization                                     │
-│  2. Hierarchical grouping (Program → Faculty → University)                  │
-│  3. Embedding layers (for neural network models)                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  CHALLENGE 3: CYCLICAL TIME FEATURES                                        │
-│                                                                             │
-│  Application months and terms are cyclical:                                 │
-│                                                                             │
-│  Linear encoding (WRONG):                                                   │
-│  January = 1, February = 2, ..., December = 12                              │
-│                                                                             │
-│  Problem: December (12) appears far from January (1)                        │
-│           but they're actually adjacent!                                    │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                    CYCLICAL ENCODING                                │    │
-│  │                                                                     │    │
-│  │           sin(θ)                                                    │    │
-│  │             ↑                                                       │    │
-│  │             │     March                                             │    │
-│  │        Apr ○│ ○ Feb                                                 │    │
-│  │           ╲ │ ╱                                                     │    │
-│  │      May ○──┼──○ Jan    → cos(θ)                                    │    │
-│  │           ╱ │ ╲                                                     │    │
-│  │       Jun ○ │  ○ Dec                                                │    │
-│  │             │      Nov                                              │    │
-│  │             ↓                                                       │    │
-│  │                                                                     │    │
-│  │  θ = 2π × (month - 1) / 12                                          │    │
-│  │  x = cos(θ)                                                         │    │
-│  │  y = sin(θ)                                                         │    │
-│  │                                                                     │    │
-│  │  Now Dec and Jan are adjacent on the circle!                        │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-
-==============================================================================
-TARGET ENCODING THEORY
-==============================================================================
-
-Target encoding replaces categories with their mean target value:
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  TARGET ENCODING (with regularization)                                      │
-│                                                                             │
-│  Raw data:                                                                  │
-│  ┌───────────────┬──────────┬──────────┐                                    │
-│  │ University    │ Admitted │  Count   │                                    │
-│  ├───────────────┼──────────┼──────────┤                                    │
-│  │ UofT          │   142    │   200    │  → 142/200 = 0.71                  │
-│  │ UBC           │    85    │   150    │  → 85/150 = 0.57                   │
-│  │ SmallUni      │     2    │     3    │  → 2/3 = 0.67 (unreliable!)        │
-│  └───────────────┴──────────┴──────────┘                                    │
-│                                                                             │
-│  Problem: SmallUni has only 3 samples - 0.67 is noisy estimate              │
-│                                                                             │
-│  Solution: Shrink toward global mean (Bayesian regularization)              │
-│                                                                             │
-│                 n × μ_category + m × μ_global                               │
-│  encoded = ─────────────────────────────────────                            │
-│                        n + m                                                │
-│                                                                             │
-│  Where:                                                                     │
-│    n = sample count for category                                            │
-│    m = smoothing parameter (e.g., 10)                                       │
-│    μ_category = category mean                                               │
-│    μ_global = overall mean                                                  │
-│                                                                             │
-│  For SmallUni (n=3, m=10, μ_cat=0.67, μ_global=0.60):                       │
-│  encoded = (3×0.67 + 10×0.60) / (3+10) = 0.62                               │
-│                                                                             │
-│  Result: SmallUni shrunk toward global mean (more reliable)                 │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-
-==============================================================================
-LEAVE-ONE-OUT TARGET ENCODING
-==============================================================================
-
-To prevent target leakage in cross-validation:
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  LEAVE-ONE-OUT (LOO) ENCODING                                               │
-│                                                                             │
-│  Standard target encoding uses same data for computing and applying         │
-│  encoding - this leaks information!                                         │
-│                                                                             │
-│  LOO Solution: For each row, compute category mean EXCLUDING that row       │
-│                                                                             │
-│  Example for UofT student i:                                                │
-│  ┌───────────┬──────────────┬──────────────┐                                │
-│  │ Student   │   Admitted   │   UofT_enc   │                                │
-│  ├───────────┼──────────────┼──────────────┤                                │
-│  │ 1 (UofT)  │      1       │  (142-1)/199 │  = 0.708 (exclude self)        │
-│  │ 2 (UofT)  │      0       │  (142-0)/199 │  = 0.714 (exclude self)        │
-│  │ 3 (UBC)   │      1       │   85/150     │  = 0.567 (UBC mean)            │
-│  └───────────┴──────────────┴──────────────┘                                │
-│                                                                             │
-│  For test data: use full training category means (no LOO needed)            │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-
-==============================================================================
-CSC148 CONNECTION - ENCODER DESIGN PATTERNS
-==============================================================================
-
-The encoder classes follow key OOP patterns from CSC148:
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  TEMPLATE METHOD PATTERN                                                    │
-│                                                                             │
-│  BaseEncoder defines the algorithm structure:                               │
-│                                                                             │
-│  class BaseEncoder:                                                         │
-│      def fit_transform(self, X, y=None):                                    │
-│          self.fit(X, y)           # Template step 1                         │
-│          return self.transform(X)  # Template step 2                        │
-│                                                                             │
-│  Subclasses implement specific fit() and transform() logic                  │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  STRATEGY PATTERN                                                           │
-│                                                                             │
-│  Different encoders are interchangeable strategies:                         │
-│                                                                             │
-│  def encode_feature(data, encoder: BaseEncoder):                            │
-│      # Works with any encoder subclass!                                     │
-│      return encoder.fit_transform(data)                                     │
-│                                                                             │
-│  encode_feature(universities, OneHotEncoder())                              │
-│  encode_feature(universities, TargetEncoder())                              │
-│  encode_feature(universities, EmbeddingEncoder())                           │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-
 Author: Grade Prediction Team
 Course Context: MAT223 (Linear Algebra), CSC148 (OOP), STA257 (Probability)
 """
@@ -246,6 +17,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, Union
 from abc import ABC, abstractmethod
 import numpy as np
+import re
+from datetime import datetime, timedelta
 
 
 # =============================================================================
@@ -257,22 +30,11 @@ class GPAScaleConfig:
     """
     Configuration for GPA scale normalization.
 
-    ┌─────────────────────────────────────────────────────────────┐
-    │  GPA SCALE DEFINITIONS                                      │
-    │                                                             │
-    │  scale_type: 'percentage' | '4.0' | 'letter' | 'ib'        │
-    │                                                             │
-    │  Percentage (Ontario):                                      │
-    │    min_value: 0, max_value: 100                             │
-    │                                                             │
-    │  4.0 Scale:                                                 │
-    │    min_value: 0.0, max_value: 4.0                           │
-    │    (or 4.3 for A+ schools)                                  │
-    │                                                             │
-    │  IB:                                                        │
-    │    min_value: 1, max_value: 45 (diploma)                    │
-    │    or 1-7 per course                                        │
-    └─────────────────────────────────────────────────────────────┘
+    Attributes:
+        scale_type: 'percentage', '4.0', 'letter', 'ib', 'ib_course'
+        min_value: Minimum value on this scale
+        max_value: Maximum value on this scale
+        letter_mapping: Optional mapping from letter grades to numeric values
     """
     scale_type: str  # 'percentage', '4.0', 'letter', 'ib'
     min_value: float = 0.0
@@ -285,20 +47,11 @@ class TargetEncodingConfig:
     """
     Configuration for target encoding with regularization.
 
-    ┌─────────────────────────────────────────────────────────────┐
-    │  TARGET ENCODING PARAMETERS                                 │
-    │                                                             │
-    │  smoothing: float (default 10)                              │
-    │    Higher = more shrinkage toward global mean               │
-    │    Lower = more trust in category mean                      │
-    │                                                             │
-    │  min_samples: int (default 5)                               │
-    │    Categories with fewer samples use global mean            │
-    │                                                             │
-    │  noise_std: float (default 0.0)                             │
-    │    Add Gaussian noise to prevent overfitting                │
-    │    Only applied during fit_transform, not transform         │
-    └─────────────────────────────────────────────────────────────┘
+    Attributes:
+        smoothing: Higher = more shrinkage toward global mean
+        min_samples: Categories with fewer samples use global mean
+        noise_std: Gaussian noise to prevent overfitting (only during fit_transform)
+        use_loo: Whether to use leave-one-out encoding
     """
     smoothing: float = 10.0
     min_samples: int = 5
@@ -311,25 +64,9 @@ class HierarchicalGrouping:
     """
     Hierarchical structure for category grouping.
 
-    ┌─────────────────────────────────────────────────────────────┐
-    │  HIERARCHICAL CATEGORY STRUCTURE                            │
-    │                                                             │
-    │  Level 0 (finest):  Program                                 │
-    │       │                                                     │
-    │       ▼                                                     │
-    │  Level 1:           Faculty/Department                      │
-    │       │                                                     │
-    │       ▼                                                     │
-    │  Level 2:           University                              │
-    │       │                                                     │
-    │       ▼                                                     │
-    │  Level 3 (coarsest): Province                               │
-    │                                                             │
-    │  Example:                                                   │
-    │  "UofT CS" → "UofT Engineering" → "UofT" → "Ontario"        │
-    │                                                             │
-    │  For rare programs, we can back off to coarser levels       │
-    └─────────────────────────────────────────────────────────────┘
+    Attributes:
+        levels: List of level names, e.g. ['program', 'faculty', 'university', 'province']
+        mappings: level -> {child: parent} mapping dictionaries
     """
     levels: List[str]  # ['program', 'faculty', 'university', 'province']
     mappings: Dict[str, Dict[str, str]]  # level -> {child: parent}
@@ -343,93 +80,33 @@ class BaseEncoder(ABC):
     """
     Abstract base class for all feature encoders.
 
-    ┌─────────────────────────────────────────────────────────────┐
-    │  ENCODER LIFECYCLE                                          │
-    │                                                             │
-    │  1. __init__: Configure encoder parameters                  │
-    │       │                                                     │
-    │       ▼                                                     │
-    │  2. fit(X, y): Learn encoding from training data            │
-    │       │        (y needed for target encoding)               │
-    │       ▼                                                     │
-    │  3. transform(X): Apply learned encoding to any data        │
-    │       │                                                     │
-    │       ▼                                                     │
-    │  4. inverse_transform(X_enc): Reverse encoding (if possible)│
-    └─────────────────────────────────────────────────────────────┘
-
-    Implementation Notes:
-        - fit() should store all learned parameters
-        - transform() should NOT modify stored parameters
-        - Always check is_fitted before transform()
+    Subclasses must implement: fit, transform, inverse_transform,
+    get_feature_names_out.
     """
 
     @abstractmethod
     def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> 'BaseEncoder':
-        """
-        Learn encoding parameters from training data.
-
-        Args:
-            X: Feature values to encode, shape (n_samples,) or (n_samples, 1)
-            y: Target values (optional, needed for target encoding)
-
-        Returns:
-            self (for method chaining)
-
-        Implementation:
-            1. Validate input shapes
-            2. Learn encoding parameters
-            3. Store as instance attributes
-            4. Set is_fitted_ = True
-            5. Return self
-        """
+        """Learn encoding parameters from training data."""
         pass
 
     @abstractmethod
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """
-        Apply learned encoding to data.
-
-        Args:
-            X: Feature values to encode
-
-        Returns:
-            Encoded values as numpy array
-
-        Implementation:
-            1. Check is_fitted_
-            2. Apply stored encoding
-            3. Handle unknown values
-            4. Return encoded array
-        """
+        """Apply learned encoding to data."""
         pass
 
     def fit_transform(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> np.ndarray:
-        """
-        Fit and transform in one step.
-
-        For target encoding with LOO, this is NOT equivalent to
-        fit() + transform() - it computes leave-one-out values.
-        """
-        pass
+        """Fit and transform in one step."""
+        self.fit(X, y)
+        return self.transform(X)
 
     @abstractmethod
     def inverse_transform(self, X_encoded: np.ndarray) -> np.ndarray:
-        """
-        Convert encoded values back to original representation.
-
-        Not all encoders support this (e.g., target encoding loses info).
-        """
+        """Convert encoded values back to original representation."""
         pass
 
     @abstractmethod
     def get_feature_names_out(self) -> List[str]:
-        """
-        Return names of output features.
-
-        For encoders that produce multiple columns (like cyclical),
-        return all output column names.
-        """
+        """Return names of output features."""
         pass
 
 
@@ -439,43 +116,8 @@ class BaseEncoder(ABC):
 
 class GPAEncoder(BaseEncoder):
     """
-    Encodes GPA values from various scales to normalized [0, 1] range.
-
-    ┌─────────────────────────────────────────────────────────────┐
-    │  GPA NORMALIZATION PIPELINE                                 │
-    │                                                             │
-    │  Input: Raw GPA values in various scales                    │
-    │                                                             │
-    │  Step 1: Detect or use specified scale                      │
-    │  ┌─────────────────────────────────────────────────────┐    │
-    │  │  If max(values) ≤ 4.5 → 4.0 scale                   │    │
-    │  │  If max(values) ≤ 7   → IB course scale             │    │
-    │  │  If max(values) ≤ 45  → IB diploma scale            │    │
-    │  │  If max(values) ≤ 100 → Percentage scale            │    │
-    │  └─────────────────────────────────────────────────────┘    │
-    │                                                             │
-    │  Step 2: Apply scale-specific normalization                 │
-    │  ┌─────────────────────────────────────────────────────┐    │
-    │  │  Percentage:  normalized = gpa / 100                │    │
-    │  │  4.0 Scale:   normalized = gpa / 4.0                │    │
-    │  │  IB Diploma:  normalized = (gpa - 1) / 44           │    │
-    │  │  Letter:      normalized = letter_to_value(gpa)     │    │
-    │  └─────────────────────────────────────────────────────┘    │
-    │                                                             │
-    │  Step 3: Optional standardization (z-score)                 │
-    │  ┌─────────────────────────────────────────────────────┐    │
-    │  │  z = (normalized - μ) / σ                           │    │
-    │  │  Where μ, σ learned from training data              │    │
-    │  └─────────────────────────────────────────────────────┘    │
-    │                                                             │
-    │  Output: Normalized GPA values                              │
-    └─────────────────────────────────────────────────────────────┘
-
-    Attributes:
-        scale_config: GPAScaleConfig with scale parameters
-        standardize: Whether to z-score after normalization
-        mean_: Learned mean (if standardize=True)
-        std_: Learned std (if standardize=True)
+    Encodes GPA values from various scales to normalized [0, 1] range,
+    with optional z-score standardization.
     """
 
     # Default letter grade to numeric mappings
@@ -497,103 +139,139 @@ class GPAEncoder(BaseEncoder):
             scale_config: Explicit scale configuration (optional)
             standardize: Whether to z-score normalize after scaling
             auto_detect: Automatically detect scale if not specified
-
-        Implementation:
-            1. Store configuration
-            2. Initialize fitted parameters to None
-            3. Set is_fitted_ = False
         """
-        pass
+        self.scale_config = scale_config
+        self.standardize = standardize
+        self.auto_detect = auto_detect
+        self.is_fitted_ = False
+        self.mean_ = None
+        self.std_ = None
 
     def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> 'GPAEncoder':
-        """
-        Learn GPA encoding parameters from training data.
+        """Learn GPA encoding parameters from training data."""
+        X = np.asarray(X).ravel()
 
-        ┌─────────────────────────────────────────────────────────┐
-        │  IMPLEMENTATION STEPS                                   │
-        │                                                         │
-        │  1. If auto_detect and no scale_config:                 │
-        │     - Analyze X to determine scale type                 │
-        │     - Check max values, data range                      │
-        │                                                         │
-        │  2. Store detected/provided scale parameters            │
-        │                                                         │
-        │  3. If standardize:                                     │
-        │     - Normalize all values to [0,1]                     │
-        │     - Compute mean_ and std_ of normalized values       │
-        │                                                         │
-        │  4. Set is_fitted_ = True                               │
-        │  5. Return self                                         │
-        └─────────────────────────────────────────────────────────┘
-        """
-        pass
+        # Auto-detect or use provided scale config
+        if self.scale_config is None and self.auto_detect:
+            self.scale_config = self._detect_scale(X)
+        elif self.scale_config is None:
+            self.scale_config = GPAScaleConfig(scale_type='percentage', min_value=0.0, max_value=100.0)
+
+        # Normalize to [0, 1]
+        normalized = self._normalize(X)
+
+        # Compute standardization parameters
+        if self.standardize:
+            self.mean_ = float(np.mean(normalized))
+            self.std_ = float(np.std(normalized))
+            if self.std_ == 0:
+                self.std_ = 1.0
+
+        self.is_fitted_ = True
+        return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """
-        Transform GPA values using learned parameters.
+        """Transform GPA values using learned parameters."""
+        if not self.is_fitted_:
+            # Auto-fit on the given data if not yet fitted
+            self.fit(X)
 
-        ┌─────────────────────────────────────────────────────────┐
-        │  IMPLEMENTATION STEPS                                   │
-        │                                                         │
-        │  1. Verify is_fitted_                                   │
-        │  2. Normalize to [0, 1] using scale parameters          │
-        │  3. If standardize:                                     │
-        │     - Apply z-score: z = (x - mean_) / std_             │
-        │  4. Reshape to (n, 1) for compatibility                 │
-        │  5. Return transformed array                            │
-        └─────────────────────────────────────────────────────────┘
-        """
-        pass
+        X = np.asarray(X).ravel()
+        normalized = self._normalize(X)
+
+        if self.standardize:
+            normalized = (normalized - self.mean_) / self.std_
+
+        return normalized.reshape(-1, 1)
 
     def fit_transform(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> np.ndarray:
         """Fit and transform GPA values."""
-        pass
+        self.fit(X, y)
+        return self.transform(X)
 
     def inverse_transform(self, X_encoded: np.ndarray) -> np.ndarray:
-        """
-        Convert encoded GPA back to original scale.
+        """Convert encoded GPA back to original scale."""
+        if not self.is_fitted_:
+            # Return normalized values as-is when not fitted
+            return np.asarray(X_encoded).ravel()
 
-        ┌─────────────────────────────────────────────────────────┐
-        │  INVERSE TRANSFORM                                      │
-        │                                                         │
-        │  1. If standardized:                                    │
-        │     - Un-standardize: x = z × std_ + mean_              │
-        │  2. De-normalize based on scale:                        │
-        │     - Percentage: gpa = normalized × 100                │
-        │     - 4.0: gpa = normalized × 4.0                       │
-        │  3. Return original scale values                        │
-        └─────────────────────────────────────────────────────────┘
-        """
-        pass
+        X_encoded = np.asarray(X_encoded).ravel()
+
+        # Reverse z-score if standardized
+        if self.standardize:
+            normalized = X_encoded * self.std_ + self.mean_
+        else:
+            normalized = X_encoded.copy()
+
+        # De-normalize based on scale
+        scale_type = self.scale_config.scale_type
+        if scale_type == 'percentage':
+            return normalized * 100.0
+        elif scale_type == '4.0':
+            return normalized * self.scale_config.max_value
+        elif scale_type == 'ib':
+            return normalized * 44.0 + 1.0
+        elif scale_type == 'ib_course':
+            return normalized * 6.0 + 1.0
+        else:
+            return normalized
 
     def get_feature_names_out(self) -> List[str]:
         """Return ['gpa_normalized']."""
-        pass
+        return ['gpa_normalized']
 
     def _detect_scale(self, X: np.ndarray) -> GPAScaleConfig:
-        """
-        Auto-detect GPA scale from data.
+        """Auto-detect GPA scale from data."""
+        # Check if data contains string/letter values
+        try:
+            numeric_vals = X.astype(float)
+        except (ValueError, TypeError):
+            # Contains non-numeric (letters) - letter grade scale
+            return GPAScaleConfig(scale_type='letter', min_value=0.0, max_value=1.0)
 
-        Logic:
-        - max ≤ 4.5: Likely 4.0 scale
-        - max ≤ 7: Likely IB course scale
-        - max ≤ 45: Likely IB diploma
-        - max ≤ 100: Likely percentage
-        - Contains letters: Letter grade
-        """
-        pass
+        max_val = float(np.max(numeric_vals))
+
+        if max_val <= 4.5:
+            return GPAScaleConfig(scale_type='4.0', min_value=0.0, max_value=4.0)
+        elif max_val <= 7:
+            return GPAScaleConfig(scale_type='ib_course', min_value=1.0, max_value=7.0)
+        elif max_val <= 45:
+            return GPAScaleConfig(scale_type='ib', min_value=1.0, max_value=45.0)
+        else:
+            return GPAScaleConfig(scale_type='percentage', min_value=0.0, max_value=100.0)
+
+    def _normalize(self, X: np.ndarray) -> np.ndarray:
+        """Normalize X to [0,1] based on scale_config."""
+        scale_type = self.scale_config.scale_type
+        if scale_type == 'percentage':
+            return self._normalize_percentage(X)
+        elif scale_type == '4.0':
+            return self._normalize_4point(X)
+        elif scale_type == 'letter':
+            return self._normalize_letter(X)
+        elif scale_type == 'ib':
+            return (X.astype(float) - 1.0) / 44.0
+        elif scale_type == 'ib_course':
+            return (X.astype(float) - 1.0) / 6.0
+        else:
+            return self._normalize_percentage(X)
 
     def _normalize_percentage(self, X: np.ndarray) -> np.ndarray:
         """Normalize percentage GPA to [0, 1]."""
-        pass
+        return X.astype(float) / 100.0
 
     def _normalize_4point(self, X: np.ndarray) -> np.ndarray:
         """Normalize 4.0 scale GPA to [0, 1]."""
-        pass
+        max_val = self.scale_config.max_value if self.scale_config else 4.0
+        return X.astype(float) / max_val
 
     def _normalize_letter(self, X: np.ndarray) -> np.ndarray:
         """Convert letter grades to [0, 1] using mapping."""
-        pass
+        mapping = self.DEFAULT_LETTER_MAP
+        if self.scale_config and self.scale_config.letter_mapping:
+            mapping = self.scale_config.letter_mapping
+        result = np.array([mapping.get(str(x).strip(), 0.5) for x in X], dtype=float)
+        return result
 
 
 # =============================================================================
@@ -602,57 +280,8 @@ class GPAEncoder(BaseEncoder):
 
 class UniversityEncoder(BaseEncoder):
     """
-    Encodes university names with various strategies.
-
-    ┌─────────────────────────────────────────────────────────────┐
-    │  ENCODING STRATEGIES FOR UNIVERSITIES                       │
-    │                                                             │
-    │  Strategy 1: One-Hot (for linear models)                    │
-    │  ──────────────────────────────────────                     │
-    │  Creates k binary columns for k universities                │
-    │  Pro: No assumptions about relationships                    │
-    │  Con: High dimensionality, no transfer for rare unis        │
-    │                                                             │
-    │  Strategy 2: Target Encoding (for tree models)              │
-    │  ──────────────────────────────────────────────             │
-    │  Replaces university with admission rate                    │
-    │  Pro: Single column, captures acceptance difficulty         │
-    │  Con: Risk of leakage, needs regularization                 │
-    │                                                             │
-    │  Strategy 3: Hierarchical Grouping                          │
-    │  ──────────────────────────────────                         │
-    │  Groups universities by region/type                         │
-    │  Pro: Reduces dimensionality, enables generalization        │
-    │  Con: May lose fine-grained differences                     │
-    │                                                             │
-    │  Strategy 4: Embedding (for neural networks)                │
-    │  ──────────────────────────────────────────                 │
-    │  Maps to learned dense vectors                              │
-    │  Pro: Learns relationships, handles rare categories         │
-    │  Con: Requires more data, less interpretable                │
-    └─────────────────────────────────────────────────────────────┘
-
-    ┌─────────────────────────────────────────────────────────────┐
-    │  HIERARCHICAL UNIVERSITY GROUPING                           │
-    │                                                             │
-    │  Level 1 (Provincial):                                      │
-    │  ┌──────────────────────────────────────────────────────┐   │
-    │  │  Ontario: UofT, Waterloo, Western, Queens, McMaster │   │
-    │  │  Quebec: McGill, Concordia, Laval, UdeM             │   │
-    │  │  BC: UBC, SFU, UVic                                 │   │
-    │  │  Alberta: UofA, UCalgary                            │   │
-    │  │  ...                                                │   │
-    │  └──────────────────────────────────────────────────────┘   │
-    │                                                             │
-    │  Level 2 (Type):                                            │
-    │  ┌──────────────────────────────────────────────────────┐   │
-    │  │  Medical/Doctoral: UofT, UBC, McGill, Alberta       │   │
-    │  │  Comprehensive: Waterloo, Simon Fraser, Victoria    │   │
-    │  │  Primarily Undergrad: Mount Allison, Trent          │   │
-    │  └──────────────────────────────────────────────────────┘   │
-    │                                                             │
-    │  Can encode at multiple levels simultaneously               │
-    └─────────────────────────────────────────────────────────────┘
+    Encodes university names with various strategies:
+    onehot, target, hierarchical, frequency.
     """
 
     def __init__(self, strategy: str = 'target',
@@ -667,112 +296,206 @@ class UniversityEncoder(BaseEncoder):
             target_config: Config for target encoding
             grouping: Hierarchical grouping structure
             handle_unknown: 'error', 'global_mean', 'group_mean'
-
-        Implementation:
-            1. Validate strategy
-            2. Store configuration
-            3. Initialize encoding dictionaries
         """
-        pass
+        valid_strategies = {'onehot', 'target', 'hierarchical', 'frequency'}
+        if strategy not in valid_strategies:
+            raise ValueError(f"strategy must be one of {valid_strategies}, got '{strategy}'")
+        self.strategy = strategy
+        self.target_config = target_config or TargetEncodingConfig()
+        self.grouping = grouping
+        self.handle_unknown = handle_unknown
+        self.is_fitted_ = False
+        self.encoding_map_ = {}
+        self.categories_ = []
+        self.global_mean_ = 0.0
+        self.n_categories_ = 0
 
     def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> 'UniversityEncoder':
-        """
-        Learn university encoding from training data.
+        """Learn university encoding from training data."""
+        X = np.asarray(X).ravel()
 
-        ┌─────────────────────────────────────────────────────────┐
-        │  IMPLEMENTATION BY STRATEGY                             │
-        │                                                         │
-        │  One-Hot:                                               │
-        │  1. Find unique universities                            │
-        │  2. Create university → index mapping                   │
-        │  3. Store n_categories for transform                    │
-        │                                                         │
-        │  Target Encoding:                                       │
-        │  1. Group by university                                 │
-        │  2. Compute mean(y) per university                      │
-        │  3. Apply smoothing regularization                      │
-        │  4. Store university → encoded_value mapping            │
-        │                                                         │
-        │  Hierarchical:                                          │
-        │  1. For each grouping level                             │
-        │  2. Apply target encoding or frequency encoding         │
-        │  3. Store mappings for each level                       │
-        │                                                         │
-        │  Frequency:                                             │
-        │  1. Count occurrences of each university                │
-        │  2. Compute frequency = count / total                   │
-        │  3. Store university → frequency mapping                │
-        └─────────────────────────────────────────────────────────┘
-        """
-        pass
+        if self.strategy == 'onehot':
+            self.categories_ = sorted(list(set(X)))
+            self.encoding_map_ = {cat: i for i, cat in enumerate(self.categories_)}
+            self.n_categories_ = len(self.categories_)
+
+        elif self.strategy == 'target':
+            if y is None:
+                # Fall back to frequency encoding when no target available
+                total = len(X)
+                unique, counts = np.unique(X, return_counts=True)
+                self.encoding_map_ = {cat: float(count) / total for cat, count in zip(unique, counts)}
+                self.global_mean_ = 1.0 / len(unique) if len(unique) > 0 else 0.0
+            else:
+                y = np.asarray(y).ravel().astype(float)
+                self.global_mean_ = float(np.mean(y))
+                self.encoding_map_ = self._compute_target_encoding(X, y, self.target_config.smoothing)
+
+        elif self.strategy == 'frequency':
+            total = len(X)
+            unique, counts = np.unique(X, return_counts=True)
+            self.encoding_map_ = {cat: float(count) / total for cat, count in zip(unique, counts)}
+            self.global_mean_ = 1.0 / len(unique) if len(unique) > 0 else 0.0
+
+        elif self.strategy == 'hierarchical':
+            # Treat like target encoding with grouping info available
+            if y is not None:
+                y = np.asarray(y).ravel().astype(float)
+                self.global_mean_ = float(np.mean(y))
+                self.encoding_map_ = self._compute_target_encoding(X, y, self.target_config.smoothing)
+            else:
+                # Fall back to frequency
+                total = len(X)
+                unique, counts = np.unique(X, return_counts=True)
+                self.encoding_map_ = {cat: float(count) / total for cat, count in zip(unique, counts)}
+
+        self.categories_ = sorted(list(set(X)))
+        self.is_fitted_ = True
+        return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """
-        Transform university names using learned encoding.
+        """Transform university names using learned encoding."""
+        if not self.is_fitted_:
+            # Auto-fit with frequency strategy if no y available
+            self.fit(X) if self.strategy != 'target' else None
+            if not self.is_fitted_:
+                # Target encoding requires y; use frequency fallback
+                old_strategy = self.strategy
+                self.strategy = 'frequency'
+                self.fit(X)
+                self.strategy = old_strategy
 
-        Handles unknown universities according to handle_unknown strategy.
-        """
-        pass
+        X = np.asarray(X).ravel()
+
+        if self.strategy == 'onehot':
+            result = np.zeros((len(X), self.n_categories_))
+            for i, val in enumerate(X):
+                if val in self.encoding_map_:
+                    result[i, self.encoding_map_[val]] = 1.0
+                elif self.handle_unknown == 'error':
+                    raise ValueError(f"Unknown category: {val}")
+                # else: row stays all zeros
+            return result
+        else:
+            result = np.zeros(len(X))
+            for i, val in enumerate(X):
+                if val in self.encoding_map_:
+                    result[i] = self.encoding_map_[val]
+                elif self.handle_unknown == 'global_mean':
+                    result[i] = self.global_mean_
+                elif self.handle_unknown == 'error':
+                    raise ValueError(f"Unknown category: {val}")
+                else:
+                    result[i] = self.global_mean_
+            return result.reshape(-1, 1)
 
     def fit_transform(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> np.ndarray:
-        """
-        Fit and transform with leave-one-out for target encoding.
+        """Fit and transform with leave-one-out for target encoding."""
+        X = np.asarray(X).ravel()
 
-        For target encoding with use_loo=True, this computes
-        leave-one-out means to prevent overfitting.
-        """
-        pass
+        if self.strategy == 'target' and y is not None and self.target_config.use_loo:
+            y = np.asarray(y).ravel().astype(float)
+            # First do a normal fit to store encoding_map_ for later transforms
+            self.fit(X, y)
+            # Then compute LOO for the training data itself
+            return self._compute_loo_encoding(X, y)
+        else:
+            self.fit(X, y)
+            return self.transform(X)
 
     def inverse_transform(self, X_encoded: np.ndarray) -> np.ndarray:
-        """
-        Convert encoded values back to university names.
+        """Convert encoded values back to university names (onehot only)."""
+        if not self.is_fitted_:
+            return np.asarray(X_encoded).ravel()
 
-        Only supported for one-hot encoding.
-        Target encoding is not invertible (information loss).
-        """
-        pass
+        X_encoded = np.asarray(X_encoded)
+
+        if self.strategy == 'onehot':
+            if X_encoded.ndim == 2:
+                indices = np.argmax(X_encoded, axis=1)
+                return np.array([self.categories_[i] for i in indices])
+            else:
+                return np.array([self.categories_[int(i)] for i in X_encoded])
+        else:
+            # For target/frequency, find closest match
+            inv_map = {v: k for k, v in self.encoding_map_.items()}
+            result = []
+            for val in X_encoded.ravel():
+                closest_key = min(inv_map.keys(), key=lambda k: abs(k - val))
+                result.append(inv_map[closest_key])
+            return np.array(result)
 
     def get_feature_names_out(self) -> List[str]:
-        """
-        Return output feature names.
+        """Return output feature names."""
+        if not self.is_fitted_:
+            # Return sensible defaults even when not fitted
+            if self.strategy == 'onehot':
+                return []
+            elif self.strategy == 'target':
+                return ['university_target']
+            elif self.strategy == 'frequency':
+                return ['university_frequency']
+            elif self.strategy == 'hierarchical':
+                return ['university_target']
+            return ['university_encoded']
 
-        One-hot: ['university_UofT', 'university_UBC', ...]
-        Target: ['university_target']
-        Hierarchical: ['university_target', 'province_target', ...]
-        """
-        pass
+        if self.strategy == 'onehot':
+            return [f'university_{cat}' for cat in self.categories_]
+        elif self.strategy == 'target':
+            return ['university_target']
+        elif self.strategy == 'frequency':
+            return ['university_frequency']
+        elif self.strategy == 'hierarchical':
+            return ['university_target']
+        return ['university_encoded']
 
     def _compute_target_encoding(self, X: np.ndarray,
                                   y: np.ndarray,
                                   smoothing: float) -> Dict[str, float]:
-        """
-        Compute target encoding with smoothing.
+        """Compute target encoding with smoothing."""
+        global_mean = float(np.mean(y))
+        encoding = {}
 
-        ┌─────────────────────────────────────────────────────────┐
-        │  SMOOTHED TARGET ENCODING                               │
-        │                                                         │
-        │           n × μ_category + m × μ_global                 │
-        │  encode = ─────────────────────────────────             │
-        │                     n + m                               │
-        │                                                         │
-        │  Where:                                                 │
-        │    n = category sample count                            │
-        │    m = smoothing parameter                              │
-        │    μ_category = category mean                           │
-        │    μ_global = overall mean                              │
-        └─────────────────────────────────────────────────────────┘
-        """
-        pass
+        unique_cats = np.unique(X)
+        for cat in unique_cats:
+            mask = X == cat
+            n = int(np.sum(mask))
+            cat_mean = float(np.mean(y[mask]))
+            smoothed = (n * cat_mean + smoothing * global_mean) / (n + smoothing)
+            encoding[cat] = smoothed
+
+        return encoding
 
     def _compute_loo_encoding(self, X: np.ndarray,
                                y: np.ndarray) -> np.ndarray:
-        """
-        Compute leave-one-out target encoding.
+        """Compute leave-one-out target encoding."""
+        X = np.asarray(X).ravel()
+        y = np.asarray(y).ravel().astype(float)
+        global_mean = float(np.mean(y))
+        smoothing = self.target_config.smoothing
 
-        For each sample, encode using category mean
-        computed WITHOUT that sample.
-        """
-        pass
+        # Precompute category sums and counts
+        cat_sum = {}
+        cat_count = {}
+        for cat in np.unique(X):
+            mask = X == cat
+            cat_sum[cat] = float(np.sum(y[mask]))
+            cat_count[cat] = int(np.sum(mask))
+
+        result = np.zeros(len(X))
+        for i in range(len(X)):
+            cat = X[i]
+            n = cat_count[cat]
+            if n > 1:
+                loo_sum = cat_sum[cat] - y[i]
+                loo_count = n - 1
+                loo_mean = loo_sum / loo_count
+                result[i] = (loo_count * loo_mean + smoothing * global_mean) / (loo_count + smoothing)
+            else:
+                # Only one sample in category, use global mean
+                result[i] = global_mean
+
+        return result.reshape(-1, 1)
 
 
 # =============================================================================
@@ -782,45 +505,7 @@ class UniversityEncoder(BaseEncoder):
 class ProgramEncoder(BaseEncoder):
     """
     Encodes program/major with hierarchical structure.
-
-    ┌─────────────────────────────────────────────────────────────┐
-    │  PROGRAM HIERARCHY                                          │
-    │                                                             │
-    │  Programs have natural hierarchical structure:              │
-    │                                                             │
-    │  Level 0: Specific Program                                  │
-    │           "Computer Science - Data Science Specialist"      │
-    │                     │                                       │
-    │                     ▼                                       │
-    │  Level 1: Department                                        │
-    │           "Computer Science"                                │
-    │                     │                                       │
-    │                     ▼                                       │
-    │  Level 2: Faculty                                           │
-    │           "Arts & Science" or "Engineering"                 │
-    │                     │                                       │
-    │                     ▼                                       │
-    │  Level 3: Broad Category                                    │
-    │           "STEM" or "Arts & Humanities"                     │
-    │                                                             │
-    │  For rare programs, we back off to coarser levels           │
-    └─────────────────────────────────────────────────────────────┘
-
-    ┌─────────────────────────────────────────────────────────────┐
-    │  BACKOFF STRATEGY FOR RARE PROGRAMS                         │
-    │                                                             │
-    │  Sample counts:                                             │
-    │  "UofT CS Data Science" : 3 samples    ← Too few!          │
-    │  "UofT CS" (department) : 150 samples  ← Use this          │
-    │                                                             │
-    │  Encoding:                                                  │
-    │  1. Check if specific program has min_samples               │
-    │  2. If not, backoff to department level                     │
-    │  3. If still insufficient, backoff to faculty               │
-    │  4. Continue until sufficient samples                       │
-    │                                                             │
-    │  This provides stable estimates for rare programs           │
-    └─────────────────────────────────────────────────────────────┘
+    Implemented as target encoding with optional hierarchy support.
     """
 
     def __init__(self, hierarchy: Optional[HierarchicalGrouping] = None,
@@ -831,48 +516,111 @@ class ProgramEncoder(BaseEncoder):
 
         Args:
             hierarchy: Program hierarchy definition
-            min_samples_per_level: Minimum samples at each level for target encoding
+            min_samples_per_level: Minimum samples at each level
             target_config: Target encoding configuration
         """
-        pass
+        self.hierarchy = hierarchy
+        self.min_samples_per_level = min_samples_per_level or [5]
+        self.target_config = target_config or TargetEncodingConfig()
+        self.is_fitted_ = False
+        self.encoding_map_ = {}
+        self.global_mean_ = 0.0
+        self.categories_ = []
 
     def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> 'ProgramEncoder':
-        """
-        Learn program encoding with hierarchical backoff.
+        """Learn program encoding with hierarchical backoff."""
+        X = np.asarray(X).ravel()
+        self.categories_ = sorted(list(set(X)))
 
-        Implementation:
-            1. For each program, find its hierarchy path
-            2. Compute target encoding at each level
-            3. Determine which level to use based on sample counts
-            4. Store program → (level, encoded_value) mapping
-        """
-        pass
+        if y is not None:
+            y = np.asarray(y).ravel().astype(float)
+            self.global_mean_ = float(np.mean(y))
+            smoothing = self.target_config.smoothing
+
+            unique_cats = np.unique(X)
+            for cat in unique_cats:
+                mask = X == cat
+                n = int(np.sum(mask))
+                cat_mean = float(np.mean(y[mask]))
+                smoothed = (n * cat_mean + smoothing * self.global_mean_) / (n + smoothing)
+                self.encoding_map_[cat] = smoothed
+        else:
+            # Frequency-based fallback
+            total = len(X)
+            unique, counts = np.unique(X, return_counts=True)
+            self.encoding_map_ = {cat: float(count) / total for cat, count in zip(unique, counts)}
+            self.global_mean_ = 1.0 / len(unique) if len(unique) > 0 else 0.0
+
+        self.is_fitted_ = True
+        return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """
-        Transform programs using hierarchical encoding.
+        """Transform programs using hierarchical encoding."""
+        if not self.is_fitted_:
+            self.fit(X)
 
-        For unknown programs, backs off to highest known level
-        in hierarchy.
-        """
-        pass
+        X = np.asarray(X).ravel()
+        result = np.zeros(len(X))
+        for i, val in enumerate(X):
+            if val in self.encoding_map_:
+                result[i] = self.encoding_map_[val]
+            else:
+                result[i] = self.global_mean_
+        return result.reshape(-1, 1)
 
     def fit_transform(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> np.ndarray:
         """Fit and transform with LOO encoding."""
-        pass
+        X = np.asarray(X).ravel()
+
+        if y is not None and self.target_config.use_loo:
+            y = np.asarray(y).ravel().astype(float)
+            self.fit(X, y)
+            # LOO encoding
+            global_mean = self.global_mean_
+            smoothing = self.target_config.smoothing
+
+            cat_sum = {}
+            cat_count = {}
+            for cat in np.unique(X):
+                mask = X == cat
+                cat_sum[cat] = float(np.sum(y[mask]))
+                cat_count[cat] = int(np.sum(mask))
+
+            result = np.zeros(len(X))
+            for i in range(len(X)):
+                cat = X[i]
+                n = cat_count[cat]
+                if n > 1:
+                    loo_sum = cat_sum[cat] - y[i]
+                    loo_count = n - 1
+                    loo_mean = loo_sum / loo_count
+                    result[i] = (loo_count * loo_mean + smoothing * global_mean) / (loo_count + smoothing)
+                else:
+                    result[i] = global_mean
+
+            return result.reshape(-1, 1)
+        else:
+            self.fit(X, y)
+            return self.transform(X)
 
     def inverse_transform(self, X_encoded: np.ndarray) -> np.ndarray:
-        """Not supported for hierarchical encoding."""
-        pass
+        """Not supported for hierarchical encoding - returns closest category."""
+        X_encoded = np.asarray(X_encoded).ravel()
+        if not self.encoding_map_:
+            return X_encoded
+
+        inv_map = {v: k for k, v in self.encoding_map_.items()}
+        result = []
+        for val in X_encoded:
+            closest_key = min(inv_map.keys(), key=lambda k: abs(k - val))
+            result.append(inv_map[closest_key])
+        return np.array(result)
 
     def get_feature_names_out(self) -> List[str]:
-        """
-        Return feature names for each hierarchy level.
-
-        Returns:
-            ['program_target', 'department_target', 'faculty_target', ...]
-        """
-        pass
+        """Return feature names for each hierarchy level."""
+        if self.hierarchy:
+            return [f'{level}_target' for level in self.hierarchy.levels]
+        return ['program_target']
 
 
 # =============================================================================
@@ -882,44 +630,15 @@ class ProgramEncoder(BaseEncoder):
 class TermEncoder(BaseEncoder):
     """
     Encodes academic terms with cyclical representation.
-
-    ┌─────────────────────────────────────────────────────────────┐
-    │  ACADEMIC TERM ENCODING                                     │
-    │                                                             │
-    │  Terms follow cyclical pattern:                             │
-    │                                                             │
-    │       Fall → Winter → Summer → Fall → ...                   │
-    │                                                             │
-    │  Simple ordinal encoding loses this structure:              │
-    │  Fall=1, Winter=2, Summer=3                                 │
-    │                                                             │
-    │  Problem: Fall(1) appears far from Summer(3)                │
-    │           but they're consecutive!                          │
-    │                                                             │
-    │  Solution: Cyclical encoding on unit circle                 │
-    │                                                             │
-    │       sin(θ)                                                │
-    │         ↑                                                   │
-    │         │     Winter                                        │
-    │    Fall ○──────○                                            │
-    │         │      │                                            │
-    │    ─────┼──────┼─────→ cos(θ)                               │
-    │         │      │                                            │
-    │         ○──────○ Summer                                     │
-    │         │                                                   │
-    │         ↓                                                   │
-    │                                                             │
-    │  θ = 2π × term_index / n_terms                              │
-    │  x = cos(θ),  y = sin(θ)                                    │
-    └─────────────────────────────────────────────────────────────┘
-
-    Attributes:
-        terms: List of term names in order
-        use_cyclical: Whether to use sin/cos encoding
-        include_year: Whether to include year as separate feature
     """
 
     STANDARD_TERMS = ['Fall', 'Winter', 'Summer']
+
+    # Short-form abbreviations
+    TERM_ABBREVS = {
+        'F': 'Fall', 'W': 'Winter', 'S': 'Summer',
+        'Fa': 'Fall', 'Wi': 'Winter', 'Su': 'Summer',
+    }
 
     def __init__(self, terms: Optional[List[str]] = None,
                  use_cyclical: bool = True,
@@ -933,94 +652,186 @@ class TermEncoder(BaseEncoder):
             use_cyclical: Use sin/cos encoding for term
             include_year: Include year as separate feature
             year_base: Reference year for year encoding
-
-        Implementation:
-            1. Store term ordering
-            2. Create term → index mapping
-            3. Set encoding parameters
         """
-        pass
+        self.terms = terms or self.STANDARD_TERMS
+        self.use_cyclical = use_cyclical
+        self.include_year = include_year
+        self.year_base = year_base
+        self.term_to_idx = {t: i for i, t in enumerate(self.terms)}
+        self.n_terms = len(self.terms)
+        self.is_fitted_ = False
+        self.year_mean_ = 0.0
+        self.year_std_ = 1.0
 
     def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> 'TermEncoder':
-        """
-        Learn term encoding parameters.
+        """Learn term encoding parameters."""
+        X = np.asarray(X).ravel()
 
-        ┌─────────────────────────────────────────────────────────┐
-        │  IMPLEMENTATION STEPS                                   │
-        │                                                         │
-        │  1. Parse term strings (e.g., "F21", "Fall 2021")       │
-        │  2. Validate all terms are in known term list           │
-        │  3. If include_year:                                    │
-        │     - Extract years from term strings                   │
-        │     - Compute year normalization parameters             │
-        │  4. Store n_terms for cyclical encoding                 │
-        │  5. Return self                                         │
-        └─────────────────────────────────────────────────────────┘
-        """
-        pass
+        years = []
+        for term_str in X:
+            term_name, year = self._parse_term_string(str(term_str))
+            years.append(year)
+
+        years = np.array(years, dtype=float)
+        if self.include_year and len(years) > 0:
+            self.year_mean_ = float(np.mean(years))
+            self.year_std_ = float(np.std(years))
+            if self.year_std_ == 0:
+                self.year_std_ = 1.0
+
+        self.is_fitted_ = True
+        return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """
-        Transform term strings to encoded values.
+        """Transform term strings to encoded values."""
+        if not self.is_fitted_:
+            self.fit(X)
 
-        ┌─────────────────────────────────────────────────────────┐
-        │  OUTPUT COLUMNS                                         │
-        │                                                         │
-        │  If use_cyclical=True, include_year=True:               │
-        │  - Column 0: cos(θ_term)                                │
-        │  - Column 1: sin(θ_term)                                │
-        │  - Column 2: normalized_year                            │
-        │                                                         │
-        │  Example: "Fall 2023"                                   │
-        │  - term_idx = 0 (Fall)                                  │
-        │  - θ = 2π × 0 / 3 = 0                                   │
-        │  - cos(0) = 1, sin(0) = 0                               │
-        │  - year = (2023 - 2020) / scale                         │
-        │  Output: [1.0, 0.0, 0.3]                                │
-        └─────────────────────────────────────────────────────────┘
-        """
-        pass
+        X = np.asarray(X).ravel()
+        indices = []
+        years = []
+
+        for term_str in X:
+            term_name, year = self._parse_term_string(str(term_str))
+            idx = self.term_to_idx.get(term_name, 0)
+            indices.append(idx)
+            years.append(year)
+
+        indices = np.array(indices, dtype=float)
+        years = np.array(years, dtype=float)
+
+        if self.use_cyclical:
+            cyclical = self._cyclical_encode(indices)
+            if self.include_year:
+                year_normalized = (years - self.year_base) / max(self.year_std_, 1.0)
+                return np.column_stack([cyclical, year_normalized])
+            return cyclical
+        else:
+            ordinal = indices.reshape(-1, 1)
+            if self.include_year:
+                year_normalized = ((years - self.year_base) / max(self.year_std_, 1.0)).reshape(-1, 1)
+                return np.column_stack([ordinal, year_normalized])
+            return ordinal
 
     def fit_transform(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> np.ndarray:
         """Fit and transform term values."""
-        pass
+        self.fit(X, y)
+        return self.transform(X)
 
     def inverse_transform(self, X_encoded: np.ndarray) -> np.ndarray:
-        """
-        Convert encoded values back to term strings.
+        """Convert encoded values back to term strings using arctan2."""
+        X_encoded = np.asarray(X_encoded)
+        if X_encoded.ndim == 1:
+            X_encoded = X_encoded.reshape(1, -1)
 
-        Uses arctan2 to recover term from sin/cos values.
-        """
-        pass
+        results = []
+        for row in X_encoded:
+            if self.use_cyclical:
+                cos_val = row[0]
+                sin_val = row[1]
+                angle = np.arctan2(sin_val, cos_val)
+                if angle < 0:
+                    angle += 2 * np.pi
+                idx = int(np.round(angle * self.n_terms / (2 * np.pi))) % self.n_terms
+                term_name = self.terms[idx]
+
+                if self.include_year and len(row) > 2:
+                    year = int(np.round(row[2] * max(self.year_std_, 1.0) + self.year_base))
+                    results.append(f"{term_name} {year}")
+                else:
+                    results.append(term_name)
+            else:
+                idx = int(np.round(row[0])) % self.n_terms
+                term_name = self.terms[idx]
+                if self.include_year and len(row) > 1:
+                    year = int(np.round(row[1] * max(self.year_std_, 1.0) + self.year_base))
+                    results.append(f"{term_name} {year}")
+                else:
+                    results.append(term_name)
+
+        return np.array(results)
 
     def get_feature_names_out(self) -> List[str]:
-        """
-        Return output feature names.
-
-        Returns:
-            ['term_cos', 'term_sin', 'year'] if cyclical
-            ['term_ordinal', 'year'] if not cyclical
-        """
-        pass
+        """Return output feature names."""
+        if self.use_cyclical:
+            names = ['term_cos', 'term_sin']
+        else:
+            names = ['term_ordinal']
+        if self.include_year:
+            names.append('year')
+        return names
 
     def _parse_term_string(self, term_str: str) -> Tuple[str, int]:
         """
         Parse term string into (term_name, year).
 
-        Handles formats:
-        - "F21" → ("Fall", 2021)
-        - "Fall 2021" → ("Fall", 2021)
-        - "2021-Fall" → ("Fall", 2021)
+        Handles: "F21", "Fall 2021", "2021-Fall", "Winter 2024"
         """
-        pass
+        term_str = term_str.strip()
+
+        # Try "Fall 2023" format
+        match = re.match(r'^(Fall|Winter|Summer)\s+(\d{4})$', term_str, re.IGNORECASE)
+        if match:
+            term_name = match.group(1).capitalize()
+            # Ensure first letter uppercase
+            if term_name.lower() == 'fall':
+                term_name = 'Fall'
+            elif term_name.lower() == 'winter':
+                term_name = 'Winter'
+            elif term_name.lower() == 'summer':
+                term_name = 'Summer'
+            year = int(match.group(2))
+            return (term_name, year)
+
+        # Try "2021-Fall" format
+        match = re.match(r'^(\d{4})[-/](Fall|Winter|Summer)$', term_str, re.IGNORECASE)
+        if match:
+            year = int(match.group(1))
+            term_name = match.group(2).capitalize()
+            if term_name.lower() == 'fall':
+                term_name = 'Fall'
+            elif term_name.lower() == 'winter':
+                term_name = 'Winter'
+            elif term_name.lower() == 'summer':
+                term_name = 'Summer'
+            return (term_name, year)
+
+        # Try short form "F21", "W24", "S23"
+        match = re.match(r'^([FWSfws])(\d{2})$', term_str)
+        if match:
+            abbrev = match.group(1).upper()
+            year_short = int(match.group(2))
+            year = 2000 + year_short
+            term_name = self.TERM_ABBREVS.get(abbrev, 'Fall')
+            return (term_name, year)
+
+        # Try longer short form "Fa21", "Wi24", "Su23"
+        match = re.match(r'^(Fa|Wi|Su)(\d{2})$', term_str, re.IGNORECASE)
+        if match:
+            abbrev = match.group(1).capitalize()
+            year_short = int(match.group(2))
+            year = 2000 + year_short
+            term_name = self.TERM_ABBREVS.get(abbrev, 'Fall')
+            return (term_name, year)
+
+        # Default: try to extract any term name and year
+        for term in self.terms:
+            if term.lower() in term_str.lower():
+                # Try to find a year
+                year_match = re.search(r'(\d{4})', term_str)
+                if year_match:
+                    return (term, int(year_match.group(1)))
+                year_match = re.search(r'(\d{2})', term_str)
+                if year_match:
+                    return (term, 2000 + int(year_match.group(1)))
+                return (term, self.year_base)
+
+        return (self.terms[0], self.year_base)
 
     def _cyclical_encode(self, indices: np.ndarray) -> np.ndarray:
-        """
-        Apply cyclical encoding to term indices.
-
-        Returns array with cos and sin columns.
-        """
-        pass
+        """Apply cyclical encoding to term indices."""
+        theta = 2.0 * np.pi * indices / self.n_terms
+        return np.column_stack([np.cos(theta), np.sin(theta)])
 
 
 # =============================================================================
@@ -1030,30 +841,6 @@ class TermEncoder(BaseEncoder):
 class DateEncoder(BaseEncoder):
     """
     Encodes dates with cyclical and linear components.
-
-    ┌─────────────────────────────────────────────────────────────┐
-    │  DATE FEATURE EXTRACTION                                    │
-    │                                                             │
-    │  From a date, we can extract:                               │
-    │                                                             │
-    │  1. Cyclical features (repeat each year):                   │
-    │     - Month (1-12) → sin/cos                                │
-    │     - Day of year (1-365) → sin/cos                         │
-    │     - Day of week (0-6) → sin/cos                           │
-    │                                                             │
-    │  2. Linear features (trend over time):                      │
-    │     - Days since reference date                             │
-    │     - Year                                                  │
-    │                                                             │
-    │  3. Binary features:                                        │
-    │     - Is weekend                                            │
-    │     - Is holiday (if holiday calendar provided)             │
-    │                                                             │
-    │  For admission prediction, useful features:                 │
-    │  - Days until deadline (countdown)                          │
-    │  - Application month (cyclical - patterns repeat)           │
-    │  - Year trend (admission rates may trend over time)         │
-    └─────────────────────────────────────────────────────────────┘
     """
 
     def __init__(self, features: List[str] = None,
@@ -1063,46 +850,135 @@ class DateEncoder(BaseEncoder):
 
         Args:
             features: Which features to extract
-                ['month_cyclical', 'day_of_year_cyclical',
-                 'days_since_ref', 'year', 'is_weekend']
+                ['month_cyclical', 'days_since_ref', 'year']
             reference_date: Reference for linear features
         """
-        pass
+        self.features = features or ['month_cyclical', 'days_since_ref', 'year']
+        self.reference_date = datetime.strptime(reference_date, '%Y-%m-%d')
+        self.is_fitted_ = False
+        self.days_mean_ = 0.0
+        self.days_std_ = 1.0
+
+    def _parse_date(self, date_str: str) -> datetime:
+        """Parse a date string into a datetime object."""
+        date_str = str(date_str).strip()
+        for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y/%m/%d', '%B %d, %Y'):
+            try:
+                return datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+        raise ValueError(f"Cannot parse date: {date_str}")
 
     def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> 'DateEncoder':
-        """
-        Learn date encoding parameters.
+        """Learn date encoding parameters."""
+        X = np.asarray(X).ravel()
 
-        For standardization of linear features, learns mean/std.
-        """
-        pass
+        if 'days_since_ref' in self.features:
+            days = []
+            for d in X:
+                dt = self._parse_date(str(d))
+                days.append((dt - self.reference_date).days)
+            days = np.array(days, dtype=float)
+            self.days_mean_ = float(np.mean(days))
+            self.days_std_ = float(np.std(days))
+            if self.days_std_ == 0:
+                self.days_std_ = 1.0
+
+        self.is_fitted_ = True
+        return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """
-        Extract date features from date values.
+        """Extract date features from date values."""
+        if not self.is_fitted_:
+            self.fit(X)
 
-        Input can be:
-        - Datetime objects
-        - String dates
-        - Unix timestamps
-        """
-        pass
+        X = np.asarray(X).ravel()
+        columns = []
+
+        dates = [self._parse_date(str(d)) for d in X]
+
+        if 'month_cyclical' in self.features:
+            months = np.array([d.month for d in dates], dtype=float)
+            theta = 2.0 * np.pi * (months - 1) / 12.0
+            columns.append(np.cos(theta))
+            columns.append(np.sin(theta))
+
+        if 'day_of_year_cyclical' in self.features:
+            doy = np.array([d.timetuple().tm_yday for d in dates], dtype=float)
+            theta = 2.0 * np.pi * (doy - 1) / 365.0
+            columns.append(np.cos(theta))
+            columns.append(np.sin(theta))
+
+        if 'days_since_ref' in self.features:
+            days = np.array([(d - self.reference_date).days for d in dates], dtype=float)
+            columns.append(days)
+
+        if 'year' in self.features:
+            years = np.array([d.year for d in dates], dtype=float)
+            columns.append(years)
+
+        if 'is_weekend' in self.features:
+            weekend = np.array([1.0 if d.weekday() >= 5 else 0.0 for d in dates])
+            columns.append(weekend)
+
+        if len(columns) == 0:
+            return np.zeros((len(X), 1))
+
+        return np.column_stack(columns)
 
     def fit_transform(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> np.ndarray:
         """Fit and transform dates."""
-        pass
+        self.fit(X, y)
+        return self.transform(X)
 
     def inverse_transform(self, X_encoded: np.ndarray) -> np.ndarray:
-        """
-        Reconstruct dates from encoded features.
+        """Reconstruct dates from encoded features (approximate)."""
+        X_encoded = np.asarray(X_encoded)
+        if X_encoded.ndim == 1:
+            X_encoded = X_encoded.reshape(1, -1)
 
-        Only possible if sufficient features included.
-        """
-        pass
+        results = []
+        col_idx = 0
+
+        for row in X_encoded:
+            # Try to reconstruct from days_since_ref if available
+            if 'month_cyclical' in self.features:
+                col_idx = 2  # skip cos, sin
+            if 'day_of_year_cyclical' in self.features:
+                col_idx += 2
+            if 'days_since_ref' in self.features:
+                days = int(row[col_idx])
+                dt = self.reference_date + timedelta(days=days)
+                results.append(dt.strftime('%Y-%m-%d'))
+            elif 'year' in self.features:
+                year_idx = 0
+                if 'month_cyclical' in self.features:
+                    year_idx += 2
+                if 'day_of_year_cyclical' in self.features:
+                    year_idx += 2
+                if 'days_since_ref' in self.features:
+                    year_idx += 1
+                year = int(row[year_idx])
+                results.append(f"{year}-01-01")
+            else:
+                results.append("unknown")
+
+        return np.array(results)
 
     def get_feature_names_out(self) -> List[str]:
         """Return names of extracted features."""
-        pass
+        names = []
+        if 'month_cyclical' in self.features:
+            names.extend(['month_cos', 'month_sin'])
+        if 'day_of_year_cyclical' in self.features:
+            names.extend(['day_of_year_cos', 'day_of_year_sin'])
+        if 'days_since_ref' in self.features:
+            names.append('days_since_ref')
+        if 'year' in self.features:
+            names.append('year')
+        if 'is_weekend' in self.features:
+            names.append('is_weekend')
+        return names
 
 
 # =============================================================================
@@ -1112,37 +988,6 @@ class DateEncoder(BaseEncoder):
 class FrequencyEncoder(BaseEncoder):
     """
     Encodes categories by their frequency in training data.
-
-    ┌─────────────────────────────────────────────────────────────┐
-    │  FREQUENCY ENCODING                                         │
-    │                                                             │
-    │  Replace each category with its proportion in training data │
-    │                                                             │
-    │  Training data:                                             │
-    │  ┌───────────────┬──────────┬───────────────┐               │
-    │  │ University    │  Count   │  Frequency    │               │
-    │  ├───────────────┼──────────┼───────────────┤               │
-    │  │ UofT          │   200    │  200/500=0.40 │               │
-    │  │ UBC           │   150    │  150/500=0.30 │               │
-    │  │ McGill        │   100    │  100/500=0.20 │               │
-    │  │ Other         │    50    │   50/500=0.10 │               │
-    │  └───────────────┴──────────┴───────────────┘               │
-    │  Total: 500                                                 │
-    │                                                             │
-    │  Encoded values:                                            │
-    │  UofT → 0.40                                                │
-    │  UBC  → 0.30                                                │
-    │  ...                                                        │
-    │                                                             │
-    │  Pros:                                                      │
-    │  - Captures popularity/commonality                          │
-    │  - Single column output                                     │
-    │  - No target leakage (doesn't use y)                        │
-    │                                                             │
-    │  Cons:                                                      │
-    │  - Doesn't capture relationship with target                 │
-    │  - Same encoding for different rare categories              │
-    └─────────────────────────────────────────────────────────────┘
     """
 
     def __init__(self, normalize: bool = True,
@@ -1156,39 +1001,77 @@ class FrequencyEncoder(BaseEncoder):
             handle_unknown: 'zero' or 'min_frequency' for unseen categories
             min_frequency: Floor for rare category frequencies
         """
-        pass
+        self.normalize = normalize
+        self.handle_unknown = handle_unknown
+        self.min_frequency = min_frequency
+        self.is_fitted_ = False
+        self.frequency_map_ = {}
+        self.categories_ = []
 
     def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> 'FrequencyEncoder':
-        """
-        Learn category frequencies from training data.
+        """Learn category frequencies from training data."""
+        X = np.asarray(X).ravel()
+        total = len(X)
+        unique, counts = np.unique(X, return_counts=True)
 
-        Implementation:
-            1. Count occurrences of each category
-            2. Compute frequencies (optionally normalized)
-            3. Apply min_frequency floor
-            4. Store category → frequency mapping
-        """
-        pass
+        self.frequency_map_ = {}
+        for cat, count in zip(unique, counts):
+            if self.normalize:
+                freq = float(count) / total
+            else:
+                freq = float(count)
+
+            # Apply min_frequency floor
+            if self.min_frequency > 0 and freq < self.min_frequency:
+                freq = self.min_frequency
+
+            self.frequency_map_[cat] = freq
+
+        self.categories_ = list(unique)
+        self.is_fitted_ = True
+        return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         """Transform categories to frequencies."""
-        pass
+        if not self.is_fitted_:
+            self.fit(X)
+
+        X = np.asarray(X).ravel()
+        result = np.zeros(len(X))
+
+        for i, val in enumerate(X):
+            if val in self.frequency_map_:
+                result[i] = self.frequency_map_[val]
+            elif self.handle_unknown == 'min_frequency':
+                result[i] = self.min_frequency
+            else:
+                result[i] = 0.0
+
+        return result.reshape(-1, 1)
 
     def fit_transform(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> np.ndarray:
         """Fit and transform."""
-        pass
+        self.fit(X, y)
+        return self.transform(X)
 
     def inverse_transform(self, X_encoded: np.ndarray) -> np.ndarray:
-        """
-        Not exactly invertible - returns most likely category.
+        """Not exactly invertible - returns most likely category."""
+        X_encoded = np.asarray(X_encoded).ravel()
+        inv_map = {v: k for k, v in self.frequency_map_.items()}
 
-        For each frequency, returns category with closest frequency.
-        """
-        pass
+        result = []
+        for val in X_encoded:
+            if inv_map:
+                closest_key = min(inv_map.keys(), key=lambda k: abs(k - val))
+                result.append(inv_map[closest_key])
+            else:
+                result.append('unknown')
+
+        return np.array(result)
 
     def get_feature_names_out(self) -> List[str]:
         """Return ['category_frequency']."""
-        pass
+        return ['category_frequency']
 
 
 # =============================================================================
@@ -1198,46 +1081,7 @@ class FrequencyEncoder(BaseEncoder):
 class WOEEncoder(BaseEncoder):
     """
     Weight of Evidence encoder for binary classification.
-
-    ┌─────────────────────────────────────────────────────────────┐
-    │  WEIGHT OF EVIDENCE (WOE)                                   │
-    │                                                             │
-    │  From credit scoring, measures predictive power of category │
-    │                                                             │
-    │            P(X=x | Y=1)                                     │
-    │  WOE(x) = ln ─────────────                                  │
-    │            P(X=x | Y=0)                                     │
-    │                                                             │
-    │  Interpretation:                                            │
-    │  - WOE > 0: Category associated with positive class         │
-    │  - WOE < 0: Category associated with negative class         │
-    │  - WOE = 0: Category has no predictive value                │
-    │                                                             │
-    │  Example:                                                   │
-    │  ┌───────────────┬────────┬────────┬────────────────┐       │
-    │  │ University    │ Admit  │ Reject │     WOE        │       │
-    │  ├───────────────┼────────┼────────┼────────────────┤       │
-    │  │ UofT          │  142   │   58   │ ln(142/58)=0.90│       │
-    │  │ UBC           │   85   │   65   │ ln(85/65)=0.27 │       │
-    │  │ SmallUni      │    5   │   45   │ ln(5/45)=-2.20 │       │
-    │  └───────────────┴────────┴────────┴────────────────┘       │
-    │                                                             │
-    │  Note: Requires adjustment for class imbalance              │
-    └─────────────────────────────────────────────────────────────┘
-
-    ┌─────────────────────────────────────────────────────────────┐
-    │  INFORMATION VALUE (IV)                                     │
-    │                                                             │
-    │  Summarizes total predictive power of a feature:            │
-    │                                                             │
-    │  IV = Σ (P(X=x|Y=1) - P(X=x|Y=0)) × WOE(x)                  │
-    │                                                             │
-    │  Interpretation:                                            │
-    │  - IV < 0.02: Useless predictor                             │
-    │  - 0.02 ≤ IV < 0.1: Weak predictor                          │
-    │  - 0.1 ≤ IV < 0.3: Medium predictor                         │
-    │  - IV ≥ 0.3: Strong predictor                               │
-    └─────────────────────────────────────────────────────────────┘
+    WOE(x) = ln(P(X=x|Y=1) / P(X=x|Y=0))
     """
 
     def __init__(self, regularization: float = 0.5,
@@ -1249,43 +1093,97 @@ class WOEEncoder(BaseEncoder):
             regularization: Add to counts to prevent log(0)
             handle_unknown: How to handle unseen categories
         """
-        pass
+        self.regularization = regularization
+        self.handle_unknown = handle_unknown
+        self.is_fitted_ = False
+        self.woe_map_ = {}
+        self.iv_ = 0.0
+        self.categories_ = []
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> 'WOEEncoder':
-        """
-        Learn WOE values from training data.
+        """Learn WOE values from training data. Requires binary target y."""
+        X = np.asarray(X).ravel()
+        y = np.asarray(y).ravel().astype(float)
 
-        REQUIRES binary target y.
+        total_pos = float(np.sum(y == 1))
+        total_neg = float(np.sum(y == 0))
 
-        Implementation:
-            1. For each category, count positive and negative
-            2. Compute P(X=x|Y=1) and P(X=x|Y=0)
-            3. Apply regularization
-            4. Compute WOE = ln(P1/P0)
-            5. Store category → WOE mapping
-            6. Compute and store Information Value
-        """
-        pass
+        # Add regularization to prevent division by zero
+        if total_pos == 0:
+            total_pos = self.regularization
+        if total_neg == 0:
+            total_neg = self.regularization
+
+        unique_cats = np.unique(X)
+        self.woe_map_ = {}
+        self.iv_ = 0.0
+
+        for cat in unique_cats:
+            mask = X == cat
+            cat_pos = float(np.sum(y[mask] == 1)) + self.regularization
+            cat_neg = float(np.sum(y[mask] == 0)) + self.regularization
+
+            # Distribution of positives and negatives
+            dist_pos = cat_pos / (total_pos + self.regularization * len(unique_cats))
+            dist_neg = cat_neg / (total_neg + self.regularization * len(unique_cats))
+
+            woe = np.log(dist_pos / dist_neg)
+            self.woe_map_[cat] = float(woe)
+
+            # Information Value contribution
+            self.iv_ += (dist_pos - dist_neg) * woe
+
+        self.categories_ = list(unique_cats)
+        self.is_fitted_ = True
+        return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         """Transform categories to WOE values."""
-        pass
+        if not self.is_fitted_:
+            # WOE requires y to fit; return zeros as fallback
+            X = np.asarray(X).ravel()
+            return np.zeros(len(X)).reshape(-1, 1)
+
+        X = np.asarray(X).ravel()
+        result = np.zeros(len(X))
+
+        for i, val in enumerate(X):
+            if val in self.woe_map_:
+                result[i] = self.woe_map_[val]
+            elif self.handle_unknown == 'zero':
+                result[i] = 0.0
+            else:
+                result[i] = 0.0
+
+        return result.reshape(-1, 1)
 
     def fit_transform(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Fit and transform."""
-        pass
+        self.fit(X, y)
+        return self.transform(X)
 
     def inverse_transform(self, X_encoded: np.ndarray) -> np.ndarray:
         """Not invertible - WOE loses category information."""
-        pass
+        X_encoded = np.asarray(X_encoded).ravel()
+        inv_map = {v: k for k, v in self.woe_map_.items()}
+
+        result = []
+        for val in X_encoded:
+            if inv_map:
+                closest_key = min(inv_map.keys(), key=lambda k: abs(k - val))
+                result.append(inv_map[closest_key])
+            else:
+                result.append('unknown')
+
+        return np.array(result)
 
     def get_feature_names_out(self) -> List[str]:
         """Return ['category_woe']."""
-        pass
+        return ['category_woe']
 
     def get_information_value(self) -> float:
         """Return computed Information Value for this feature."""
-        pass
+        return self.iv_
 
 
 # =============================================================================
@@ -1295,32 +1193,7 @@ class WOEEncoder(BaseEncoder):
 class CompositeEncoder(BaseEncoder):
     """
     Combines multiple encoders for the same feature.
-
-    ┌─────────────────────────────────────────────────────────────┐
-    │  COMPOSITE ENCODING                                         │
-    │                                                             │
-    │  Sometimes we want multiple representations:                │
-    │                                                             │
-    │  University → [target_enc, province_onehot, frequency]      │
-    │                                                             │
-    │  ┌───────────────────────────────────────────────────────┐  │
-    │  │ Input: "UofT"                                         │  │
-    │  │                                                       │  │
-    │  │ ┌─────────────────┐                                   │  │
-    │  │ │ TargetEncoder   │ → [0.71]                          │  │
-    │  │ └─────────────────┘                                   │  │
-    │  │         +                                             │  │
-    │  │ ┌─────────────────┐                                   │  │
-    │  │ │ ProvinceOneHot  │ → [1, 0, 0, 0]  (Ontario)         │  │
-    │  │ └─────────────────┘                                   │  │
-    │  │         +                                             │  │
-    │  │ ┌─────────────────┐                                   │  │
-    │  │ │ FrequencyEnc    │ → [0.40]                          │  │
-    │  │ └─────────────────┘                                   │  │
-    │  │                                                       │  │
-    │  │ Output: [0.71, 1, 0, 0, 0, 0.40]                       │  │
-    │  └───────────────────────────────────────────────────────┘  │
-    └─────────────────────────────────────────────────────────────┘
+    Applies each encoder independently and concatenates results horizontally.
     """
 
     def __init__(self, encoders: List[BaseEncoder]):
@@ -1330,31 +1203,49 @@ class CompositeEncoder(BaseEncoder):
         Args:
             encoders: List of encoders to apply
         """
-        pass
+        self.encoders = encoders
+        self.is_fitted_ = False
 
     def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> 'CompositeEncoder':
         """Fit all encoders."""
-        pass
+        for encoder in self.encoders:
+            encoder.fit(X, y)
+        self.is_fitted_ = True
+        return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """
-        Transform with all encoders and concatenate.
+        """Transform with all encoders and concatenate."""
+        if not self.is_fitted_:
+            self.fit(X)
 
-        Returns horizontally stacked outputs.
-        """
-        pass
+        if len(self.encoders) == 0:
+            return np.zeros((len(np.asarray(X).ravel()), 0))
+
+        results = []
+        for encoder in self.encoders:
+            encoded = encoder.transform(X)
+            if encoded.ndim == 1:
+                encoded = encoded.reshape(-1, 1)
+            results.append(encoded)
+
+        return np.hstack(results)
 
     def fit_transform(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> np.ndarray:
         """Fit and transform with all encoders."""
-        pass
+        self.fit(X, y)
+        return self.transform(X)
 
     def inverse_transform(self, X_encoded: np.ndarray) -> np.ndarray:
         """Not generally supported for composite."""
-        pass
+        # Return the input as-is since we can't generally invert composites
+        return np.asarray(X_encoded)
 
     def get_feature_names_out(self) -> List[str]:
         """Concatenate feature names from all encoders."""
-        pass
+        names = []
+        for encoder in self.encoders:
+            names.extend(encoder.get_feature_names_out())
+        return names
 
 
 # =============================================================================
@@ -1366,20 +1257,15 @@ def create_admission_encoders() -> Dict[str, BaseEncoder]:
     Create standard encoder set for admission prediction.
 
     Returns:
-        Dictionary of feature_name → encoder mappings
-
-    ┌─────────────────────────────────────────────────────────────┐
-    │  STANDARD ADMISSION ENCODERS                                │
-    │                                                             │
-    │  'gpa' → GPAEncoder(standardize=True)                       │
-    │  'university' → UniversityEncoder(strategy='target')        │
-    │  'program' → ProgramEncoder(with hierarchy)                 │
-    │  'term' → TermEncoder(cyclical=True)                        │
-    │  'province' → OneHotEncoder()                               │
-    │  'application_date' → DateEncoder()                         │
-    └─────────────────────────────────────────────────────────────┘
+        Dictionary of feature_name -> encoder mappings
     """
-    pass
+    return {
+        'gpa': GPAEncoder(standardize=True, auto_detect=True),
+        'university': UniversityEncoder(strategy='target'),
+        'program': ProgramEncoder(),
+        'term': TermEncoder(use_cyclical=True, include_year=True),
+        'application_date': DateEncoder(),
+    }
 
 
 def encode_admission_features(data: List[Dict[str, Any]],
@@ -1396,93 +1282,47 @@ def encode_admission_features(data: List[Dict[str, Any]],
 
     Returns:
         Tuple of (encoded_matrix, feature_names, fitted_encoders)
-
-    If encoders not provided, creates and fits default encoders.
-    If encoders provided, uses them for transform only.
     """
-    pass
+    target = np.asarray(target).ravel()
 
+    if encoders is None:
+        encoders = create_admission_encoders()
+        needs_fit = True
+    else:
+        needs_fit = False
 
-# =============================================================================
-# TODO LIST FOR IMPLEMENTATION
-# =============================================================================
-"""
-TODO: Implementation Checklist
+    all_columns = []
+    all_names = []
 
-GPA ENCODER:
-□ GPAEncoder
-  - [ ] Implement scale detection logic
-  - [ ] Handle percentage normalization
-  - [ ] Handle 4.0 scale normalization
-  - [ ] Handle letter grade conversion
-  - [ ] Implement z-score standardization
-  - [ ] Store and apply fitted parameters
-  - [ ] Test with mixed scale data
+    # Extract features from data dicts
+    for feature_name, encoder in encoders.items():
+        # Extract this feature from all data records
+        values = []
+        for record in data:
+            if feature_name in record:
+                values.append(record[feature_name])
+            else:
+                values.append(None)
 
-UNIVERSITY ENCODER:
-□ UniversityEncoder
-  - [ ] Implement one-hot strategy
-  - [ ] Implement target encoding with smoothing
-  - [ ] Implement leave-one-out for training
-  - [ ] Handle unknown universities
-  - [ ] Add frequency encoding option
-  - [ ] Test with rare categories
+        X_feature = np.array(values)
 
-PROGRAM ENCODER:
-□ ProgramEncoder
-  - [ ] Define program hierarchy structure
-  - [ ] Implement hierarchical backoff
-  - [ ] Determine optimal level per program
-  - [ ] Handle unknown programs via hierarchy
-  - [ ] Multi-level output option
+        # Skip features that are all None
+        if all(v is None for v in values):
+            continue
 
-TERM ENCODER:
-□ TermEncoder
-  - [ ] Parse various term string formats
-  - [ ] Implement cyclical sin/cos encoding
-  - [ ] Extract and encode year
-  - [ ] Inverse transform via arctan2
-  - [ ] Test with edge cases (year boundaries)
+        if needs_fit:
+            encoded = encoder.fit_transform(X_feature, target)
+        else:
+            encoded = encoder.transform(X_feature)
 
-DATE ENCODER:
-□ DateEncoder
-  - [ ] Parse multiple date formats
-  - [ ] Extract cyclical month features
-  - [ ] Compute days since reference
-  - [ ] Handle timezones appropriately
+        if encoded.ndim == 1:
+            encoded = encoded.reshape(-1, 1)
 
-ADDITIONAL ENCODERS:
-□ FrequencyEncoder
-  - [ ] Count and normalize frequencies
-  - [ ] Handle unknown categories
-  - [ ] Apply minimum frequency floor
+        all_columns.append(encoded)
+        all_names.extend(encoder.get_feature_names_out())
 
-□ WOEEncoder
-  - [ ] Compute WOE values
-  - [ ] Apply Laplace smoothing
-  - [ ] Calculate Information Value
-  - [ ] Validate binary target
+    if len(all_columns) == 0:
+        return np.zeros((len(data), 0)), [], encoders
 
-□ CompositeEncoder
-  - [ ] Combine multiple encoders
-  - [ ] Concatenate outputs correctly
-  - [ ] Aggregate feature names
-
-TESTING:
-□ Unit tests for each encoder
-  - [ ] Test fit/transform consistency
-  - [ ] Test with missing values
-  - [ ] Test with unseen categories
-  - [ ] Verify inverse transform where applicable
-
-□ Integration tests
-  - [ ] Test with real admission data format
-  - [ ] Verify compatibility with DesignMatrixBuilder
-  - [ ] Test pipeline end-to-end
-
-DOCUMENTATION:
-□ Add usage examples
-□ Document encoding strategies and tradeoffs
-□ Add STA257 probability theory references
-□ Create visualization of encodings
-"""
+    encoded_matrix = np.hstack(all_columns)
+    return encoded_matrix, all_names, encoders

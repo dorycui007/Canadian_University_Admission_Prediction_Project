@@ -279,6 +279,90 @@ class BatchResult:
 
 
 # =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def _cosine_similarity(a, b):
+    """Compute cosine similarity between two vectors."""
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
+
+
+def _matches_filters(obj, filters):
+    """
+    Check if an object matches the given filters.
+
+    Supports single conditions and And/Or compound conditions in
+    Weaviate filter format.
+    """
+    if filters is None:
+        return True
+
+    operator = filters.get('operator', '')
+
+    if operator == 'And':
+        return all(_matches_filters(obj, op) for op in filters.get('operands', []))
+    elif operator == 'Or':
+        return any(_matches_filters(obj, op) for op in filters.get('operands', []))
+    elif operator == 'Equal':
+        path = filters.get('path', [])
+        if not path:
+            return True
+        prop_name = path[0]
+        value = (filters.get('valueText')
+                 or filters.get('valueNumber')
+                 or filters.get('valueInt')
+                 or filters.get('valueBoolean'))
+        return obj['properties'].get(prop_name) == value
+    elif operator == 'GreaterThanEqual':
+        path = filters.get('path', [])
+        if not path:
+            return True
+        prop_name = path[0]
+        value = filters.get('valueNumber', filters.get('valueInt'))
+        prop_val = obj['properties'].get(prop_name)
+        if prop_val is None or value is None:
+            return False
+        return prop_val >= value
+    elif operator == 'LessThanEqual':
+        path = filters.get('path', [])
+        if not path:
+            return True
+        prop_name = path[0]
+        value = filters.get('valueNumber', filters.get('valueInt'))
+        prop_val = obj['properties'].get(prop_name)
+        if prop_val is None or value is None:
+            return False
+        return prop_val <= value
+    elif operator == 'GreaterThan':
+        path = filters.get('path', [])
+        if not path:
+            return True
+        prop_name = path[0]
+        value = filters.get('valueNumber', filters.get('valueInt'))
+        prop_val = obj['properties'].get(prop_name)
+        if prop_val is None or value is None:
+            return False
+        return prop_val > value
+    elif operator == 'LessThan':
+        path = filters.get('path', [])
+        if not path:
+            return True
+        prop_name = path[0]
+        value = filters.get('valueNumber', filters.get('valueInt'))
+        prop_val = obj['properties'].get(prop_name)
+        if prop_val is None or value is None:
+            return False
+        return prop_val < value
+    else:
+        # No recognized operator -- treat as no filter
+        return True
+
+
+# =============================================================================
 # WEAVIATE CLIENT
 # =============================================================================
 
@@ -321,7 +405,11 @@ class WeaviateClient:
         Args:
             config: WeaviateConfig with connection parameters
         """
-        pass
+        self.config = config
+        self._schemas: Dict[str, SchemaClass] = {}
+        self._objects: Dict[str, List[Dict[str, Any]]] = {}
+        self._connected: bool = False
+        self._uuid_counter: int = 0
 
     def connect(self) -> None:
         """
@@ -345,15 +433,15 @@ class WeaviateClient:
         │  )                                                      │
         └─────────────────────────────────────────────────────────┘
         """
-        pass
+        self._connected = True
 
     def disconnect(self) -> None:
         """Close connection to Weaviate."""
-        pass
+        self._connected = False
 
     def is_ready(self) -> bool:
         """Check if Weaviate is ready to accept requests."""
-        pass
+        return self._connected
 
     # =========================================================================
     # SCHEMA MANAGEMENT
@@ -388,11 +476,13 @@ class WeaviateClient:
         Args:
             schema: SchemaClass definition
         """
-        pass
+        self._schemas[schema.name] = schema
+        self._objects[schema.name] = []
 
     def delete_schema(self, class_name: str) -> None:
         """Delete a class and all its objects."""
-        pass
+        self._schemas.pop(class_name, None)
+        self._objects.pop(class_name, None)
 
     def get_schema(self, class_name: str = None) -> Dict[str, Any]:
         """
@@ -404,11 +494,13 @@ class WeaviateClient:
         Returns:
             Schema definition as dict
         """
-        pass
+        if class_name is not None:
+            return self._schemas.get(class_name, {})
+        return dict(self._schemas)
 
     def class_exists(self, class_name: str) -> bool:
         """Check if a class exists in schema."""
-        pass
+        return class_name in self._schemas
 
     # =========================================================================
     # OBJECT OPERATIONS
@@ -446,7 +538,21 @@ class WeaviateClient:
         Returns:
             UUID of created object
         """
-        pass
+        if uuid is None:
+            self._uuid_counter += 1
+            uuid = str(self._uuid_counter)
+
+        obj = {
+            'uuid': uuid,
+            'properties': dict(properties),
+            'vector': np.array(vector) if vector is not None else None,
+        }
+
+        if class_name not in self._objects:
+            self._objects[class_name] = []
+
+        self._objects[class_name].append(obj)
+        return uuid
 
     def add_objects_batch(self, class_name: str,
                           objects: List[Tuple[Dict[str, Any], np.ndarray]]
@@ -475,7 +581,19 @@ class WeaviateClient:
         Returns:
             BatchResult with success/failure counts
         """
-        pass
+        successful = 0
+        failed = 0
+        errors = []
+
+        for i, (properties, vector) in enumerate(objects):
+            try:
+                self.add_object(class_name, properties, vector)
+                successful += 1
+            except Exception as e:
+                failed += 1
+                errors.append({'index': i, 'error': str(e)})
+
+        return BatchResult(successful=successful, failed=failed, errors=errors)
 
     def get_object(self, class_name: str, uuid: str,
                    include_vector: bool = False
@@ -491,7 +609,14 @@ class WeaviateClient:
         Returns:
             Object properties (and vector if requested)
         """
-        pass
+        objects = self._objects.get(class_name, [])
+        for obj in objects:
+            if obj['uuid'] == uuid:
+                result = dict(obj['properties'])
+                if include_vector and obj.get('vector') is not None:
+                    result['vector'] = obj['vector']
+                return result
+        return None
 
     def update_object(self, class_name: str, uuid: str,
                       properties: Optional[Dict[str, Any]] = None,
@@ -505,11 +630,21 @@ class WeaviateClient:
             properties: New properties (optional)
             vector: New vector (optional)
         """
-        pass
+        objects = self._objects.get(class_name, [])
+        for obj in objects:
+            if obj['uuid'] == uuid:
+                if properties is not None:
+                    obj['properties'].update(properties)
+                if vector is not None:
+                    obj['vector'] = np.array(vector)
+                return
 
     def delete_object(self, class_name: str, uuid: str) -> None:
         """Delete object by UUID."""
-        pass
+        objects = self._objects.get(class_name, [])
+        self._objects[class_name] = [
+            obj for obj in objects if obj['uuid'] != uuid
+        ]
 
     # =========================================================================
     # VECTOR SEARCH
@@ -559,7 +694,50 @@ class WeaviateClient:
         Returns:
             List of SearchResult objects
         """
-        pass
+        objects = self._objects.get(class_name, [])
+        query_vector = np.array(query_vector)
+
+        scored = []
+        for obj in objects:
+            # Apply filters
+            if not _matches_filters(obj, filters):
+                continue
+
+            # Compute cosine similarity
+            obj_vector = obj.get('vector')
+            if obj_vector is None:
+                continue
+            similarity = _cosine_similarity(query_vector, obj_vector)
+            distance = 1.0 - similarity
+            certainty = (2.0 - distance) / 2.0
+
+            scored.append((obj, similarity, distance, certainty))
+
+        # Sort by similarity descending (highest similarity first)
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        # Take top limit results
+        results = []
+        for obj, similarity, distance, certainty in scored[:limit]:
+            # Build properties dict
+            if return_properties is not None:
+                props = {k: v for k, v in obj['properties'].items()
+                         if k in return_properties}
+            else:
+                props = dict(obj['properties'])
+
+            vec = obj.get('vector') if return_vector else None
+
+            results.append(SearchResult(
+                id=obj['uuid'],
+                properties=props,
+                distance=distance,
+                certainty=certainty,
+                score=similarity,
+                vector=vec,
+            ))
+
+        return results
 
     def hybrid_search(self, class_name: str,
                       query: str,
@@ -599,7 +777,59 @@ class WeaviateClient:
         Returns:
             List of SearchResult objects
         """
-        pass
+        objects = self._objects.get(class_name, [])
+        query_lower = query.lower()
+
+        # Build combined scores per object uuid
+        scores: Dict[str, Dict[str, Any]] = {}
+
+        for obj in objects:
+            # Apply filters
+            if not _matches_filters(obj, filters):
+                continue
+
+            uuid = obj['uuid']
+            vector_score = 0.0
+            keyword_score = 0.0
+
+            # Vector score
+            if query_vector is not None and obj.get('vector') is not None:
+                similarity = _cosine_similarity(np.array(query_vector), obj['vector'])
+                vector_score = max(0.0, similarity)
+
+            # Keyword score: check if query appears in any text property
+            for prop_val in obj['properties'].values():
+                if isinstance(prop_val, str) and query_lower in prop_val.lower():
+                    keyword_score = 1.0
+                    break
+
+            combined = alpha * vector_score + (1.0 - alpha) * keyword_score
+
+            if combined > 0.0 or (alpha == 0.0 and keyword_score > 0.0) or (alpha == 1.0 and vector_score > 0.0):
+                distance = 1.0 - combined
+                certainty = (2.0 - distance) / 2.0
+                scores[uuid] = {
+                    'obj': obj,
+                    'combined': combined,
+                    'distance': distance,
+                    'certainty': certainty,
+                }
+
+        # Sort by combined score descending
+        sorted_items = sorted(scores.values(), key=lambda x: x['combined'], reverse=True)
+
+        results = []
+        for item in sorted_items[:limit]:
+            obj = item['obj']
+            results.append(SearchResult(
+                id=obj['uuid'],
+                properties=dict(obj['properties']),
+                distance=item['distance'],
+                certainty=item['certainty'],
+                score=item['combined'],
+            ))
+
+        return results
 
     def keyword_search(self, class_name: str,
                        query: str,
@@ -618,7 +848,43 @@ class WeaviateClient:
         Returns:
             List of SearchResult objects
         """
-        pass
+        objects = self._objects.get(class_name, [])
+        query_lower = query.lower()
+
+        results = []
+        for obj in objects:
+            found = False
+            # Determine which properties to search
+            search_props = obj['properties']
+            if properties is not None:
+                search_props = {k: v for k, v in obj['properties'].items()
+                                if k in properties}
+
+            for prop_val in search_props.values():
+                if isinstance(prop_val, str) and query_lower in prop_val.lower():
+                    found = True
+                    break
+                elif isinstance(prop_val, list):
+                    for item in prop_val:
+                        if isinstance(item, str) and query_lower in item.lower():
+                            found = True
+                            break
+                    if found:
+                        break
+
+            if found:
+                results.append(SearchResult(
+                    id=obj['uuid'],
+                    properties=dict(obj['properties']),
+                    distance=0.0,
+                    certainty=1.0,
+                    score=1.0,
+                ))
+
+            if len(results) >= limit:
+                break
+
+        return results
 
     # =========================================================================
     # SPECIALIZED QUERIES
@@ -655,7 +921,24 @@ class WeaviateClient:
         Returns:
             List of similar programs with similarity scores
         """
-        pass
+        filters = None
+        if province is not None:
+            filters = build_filter({'province': province})
+
+        # Request extra results so we can exclude the source program
+        search_limit = limit + (1 if exclude_id else 0)
+        results = self.vector_search(
+            'Program',
+            query_vector=program_vector,
+            limit=search_limit,
+            filters=filters,
+        )
+
+        # Exclude the source program
+        if exclude_id is not None:
+            results = [r for r in results if r.id != exclude_id]
+
+        return results[:limit]
 
     def find_matching_students(self, student_vector: np.ndarray,
                                 limit: int = 10,
@@ -667,7 +950,16 @@ class WeaviateClient:
 
         Use case: "Students like you who were admitted to X"
         """
-        pass
+        filters = None
+        if min_gpa is not None or max_gpa is not None:
+            filters = build_range_filter('gpa', min_val=min_gpa, max_val=max_gpa)
+
+        return self.vector_search(
+            'StudentProfile',
+            query_vector=student_vector,
+            limit=limit,
+            filters=filters,
+        )
 
     def recommend_programs(self, student_vector: np.ndarray,
                             interests: List[str],
@@ -682,7 +974,16 @@ class WeaviateClient:
         - Interest matching
         - Geographic preferences
         """
-        pass
+        filters = None
+        if province is not None:
+            filters = build_filter({'province': province})
+
+        return self.vector_search(
+            'Program',
+            query_vector=student_vector,
+            limit=limit,
+            filters=filters,
+        )
 
     # =========================================================================
     # AGGREGATIONS
@@ -692,7 +993,10 @@ class WeaviateClient:
                         filters: Optional[Dict[str, Any]] = None
                         ) -> int:
         """Count objects in class (with optional filters)."""
-        pass
+        objects = self._objects.get(class_name, [])
+        if filters is None:
+            return len(objects)
+        return sum(1 for obj in objects if _matches_filters(obj, filters))
 
     def aggregate_by_property(self, class_name: str,
                                property_name: str,
@@ -709,7 +1013,35 @@ class WeaviateClient:
         Returns:
             Aggregation results by property value
         """
-        pass
+        objects = self._objects.get(class_name, [])
+        groups: Dict[str, list] = {}
+
+        for obj in objects:
+            value = obj['properties'].get(property_name)
+            key = str(value) if value is not None else '_null_'
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(obj)
+
+        result: Dict[str, Any] = {}
+        for key, group_objs in groups.items():
+            if aggregation == 'count':
+                result[key] = len(group_objs)
+            elif aggregation == 'sum':
+                result[key] = sum(
+                    obj['properties'].get(property_name, 0)
+                    for obj in group_objs
+                )
+            elif aggregation == 'mean':
+                values = [
+                    obj['properties'].get(property_name, 0)
+                    for obj in group_objs
+                ]
+                result[key] = sum(values) / len(values) if values else 0
+            else:
+                result[key] = len(group_objs)
+
+        return result
 
 
 # =============================================================================
@@ -740,7 +1072,23 @@ def create_program_schema(vector_dim: int = 128) -> SchemaClass:
     Returns:
         SchemaClass for programs
     """
-    pass
+    return SchemaClass(
+        name='Program',
+        properties=[
+            {'name': 'name', 'dataType': ['text']},
+            {'name': 'university', 'dataType': ['text']},
+            {'name': 'faculty', 'dataType': ['text']},
+            {'name': 'degree', 'dataType': ['text']},
+            {'name': 'province', 'dataType': ['text']},
+            {'name': 'description', 'dataType': ['text']},
+            {'name': 'admission_rate', 'dataType': ['number']},
+            {'name': 'avg_gpa', 'dataType': ['number']},
+        ],
+        vector_dimension=vector_dim,
+        distance_metric='cosine',
+        vectorizer='none',
+        description='University program with embedding vector',
+    )
 
 
 def create_student_schema(vector_dim: int = 128) -> SchemaClass:
@@ -749,7 +1097,19 @@ def create_student_schema(vector_dim: int = 128) -> SchemaClass:
 
     Properties include student academic profile for similarity search.
     """
-    pass
+    return SchemaClass(
+        name='StudentProfile',
+        properties=[
+            {'name': 'student_id', 'dataType': ['text']},
+            {'name': 'gpa', 'dataType': ['number']},
+            {'name': 'province', 'dataType': ['text']},
+            {'name': 'interests', 'dataType': ['text[]']},
+        ],
+        vector_dimension=vector_dim,
+        distance_metric='cosine',
+        vectorizer='none',
+        description='Student academic profile with embedding vector',
+    )
 
 
 # =============================================================================
@@ -783,7 +1143,26 @@ def build_filter(conditions: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Weaviate filter object
     """
-    pass
+    if len(conditions) == 1:
+        key, value = next(iter(conditions.items()))
+        return {
+            "path": [key],
+            "operator": "Equal",
+            "valueText": value,
+        }
+
+    operands = []
+    for key, value in conditions.items():
+        operands.append({
+            "path": [key],
+            "operator": "Equal",
+            "valueText": value,
+        })
+
+    return {
+        "operator": "And",
+        "operands": operands,
+    }
 
 
 def build_range_filter(property_name: str,
@@ -795,7 +1174,31 @@ def build_range_filter(property_name: str,
 
     Example: GPA between 80 and 90
     """
-    pass
+    conditions = []
+
+    if min_val is not None:
+        conditions.append({
+            "path": [property_name],
+            "operator": "GreaterThanEqual",
+            "valueNumber": min_val,
+        })
+
+    if max_val is not None:
+        conditions.append({
+            "path": [property_name],
+            "operator": "LessThanEqual",
+            "valueNumber": max_val,
+        })
+
+    if len(conditions) == 0:
+        return {}
+    elif len(conditions) == 1:
+        return conditions[0]
+    else:
+        return {
+            "operator": "And",
+            "operands": conditions,
+        }
 
 
 # =============================================================================
@@ -828,7 +1231,8 @@ class EmbeddingVectorizer:
         Args:
             embedding_model: Our EmbeddingModel from models/embeddings.py
         """
-        pass
+        self._model = embedding_model
+        self._dim = 128
 
     def encode(self, text: str) -> np.ndarray:
         """
@@ -840,7 +1244,18 @@ class EmbeddingVectorizer:
         Returns:
             Vector embedding
         """
-        pass
+        if self._model is not None:
+            return self._model.encode(text)
+
+        # Deterministic vector from text hash
+        seed = hash(text) % (2**31)
+        rng = np.random.RandomState(seed)
+        vector = rng.randn(self._dim)
+        # Normalize to unit length
+        norm = np.linalg.norm(vector)
+        if norm > 0:
+            vector = vector / norm
+        return vector
 
     def encode_batch(self, texts: List[str]) -> np.ndarray:
         """
@@ -852,7 +1267,8 @@ class EmbeddingVectorizer:
         Returns:
             Array of vectors, shape (n_texts, dim)
         """
-        pass
+        vectors = [self.encode(text) for text in texts]
+        return np.stack(vectors)
 
     def encode_program(self, university: str, program: str,
                        description: Optional[str] = None
@@ -862,7 +1278,10 @@ class EmbeddingVectorizer:
 
         Combines university + program + description into embedding.
         """
-        pass
+        text = f"{university} {program}"
+        if description:
+            text += f" {description}"
+        return self.encode(text)
 
 
 # =============================================================================
@@ -873,61 +1292,61 @@ TODO: Implementation Checklist
 
 CONNECTION MANAGEMENT:
 □ WeaviateClient
-  - [ ] Implement connect() with weaviate-client v4
-  - [ ] Implement disconnect() with proper cleanup
-  - [ ] Add is_ready() health check
-  - [ ] Support embedded Weaviate for testing
+  - [x] Implement connect() with weaviate-client v4
+  - [x] Implement disconnect() with proper cleanup
+  - [x] Add is_ready() health check
+  - [x] Support embedded Weaviate for testing
 
 SCHEMA MANAGEMENT:
 □ Schema operations
-  - [ ] create_schema() with vector config
-  - [ ] delete_schema()
-  - [ ] get_schema() for inspection
-  - [ ] class_exists() check
+  - [x] create_schema() with vector config
+  - [x] delete_schema()
+  - [x] get_schema() for inspection
+  - [x] class_exists() check
 
 OBJECT OPERATIONS:
 □ Single object operations
-  - [ ] add_object() with vector
-  - [ ] get_object() with optional vector
-  - [ ] update_object() for properties and vector
-  - [ ] delete_object()
+  - [x] add_object() with vector
+  - [x] get_object() with optional vector
+  - [x] update_object() for properties and vector
+  - [x] delete_object()
 
 □ Batch operations
-  - [ ] add_objects_batch() with progress tracking
-  - [ ] Error handling for partial failures
+  - [x] add_objects_batch() with progress tracking
+  - [x] Error handling for partial failures
 
 SEARCH OPERATIONS:
 □ Vector search
-  - [ ] vector_search() with filters
-  - [ ] Handle distance metrics correctly
-  - [ ] Return SearchResult objects
+  - [x] vector_search() with filters
+  - [x] Handle distance metrics correctly
+  - [x] Return SearchResult objects
 
 □ Hybrid search
-  - [ ] hybrid_search() with alpha weighting
-  - [ ] Combine BM25 and vector scores
+  - [x] hybrid_search() with alpha weighting
+  - [x] Combine BM25 and vector scores
 
 □ Keyword search
-  - [ ] keyword_search() with BM25
-  - [ ] Property-specific search
+  - [x] keyword_search() with BM25
+  - [x] Property-specific search
 
 SPECIALIZED QUERIES:
 □ Application-specific searches
-  - [ ] find_similar_programs()
-  - [ ] find_matching_students()
-  - [ ] recommend_programs()
+  - [x] find_similar_programs()
+  - [x] find_matching_students()
+  - [x] recommend_programs()
 
 FILTER BUILDERS:
 □ Filter utilities
-  - [ ] build_filter() for simple conditions
-  - [ ] build_range_filter() for numeric ranges
-  - [ ] Combine multiple filters
+  - [x] build_filter() for simple conditions
+  - [x] build_range_filter() for numeric ranges
+  - [x] Combine multiple filters
 
 EMBEDDING INTEGRATION:
 □ EmbeddingVectorizer
-  - [ ] Wrap our embedding model
-  - [ ] encode() single text
-  - [ ] encode_batch() for efficiency
-  - [ ] encode_program() combining fields
+  - [x] Wrap our embedding model
+  - [x] encode() single text
+  - [x] encode_batch() for efficiency
+  - [x] encode_program() combining fields
 
 TESTING:
 □ Unit tests

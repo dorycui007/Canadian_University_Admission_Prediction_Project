@@ -1,0 +1,2701 @@
+\documentclass[12pt, letterpaper]{report}
+
+% ============================================================
+% PACKAGES
+% ============================================================
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm, mathtools}
+\usepackage[ruled, vlined, linesnumbered]{algorithm2e}
+\usepackage{tikz, pgfplots}
+\usepackage{listings}
+\usepackage[colorlinks=true, linkcolor=blue!70!black, citecolor=green!50!black, urlcolor=blue!60!black]{hyperref}
+\usepackage[most]{tcolorbox}
+\usepackage{booktabs, tabularx, longtable}
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{multicol}
+
+% ============================================================
+% TIKZ LIBRARIES
+% ============================================================
+\usetikzlibrary{
+  arrows.meta, positioning, calc,
+  decorations.pathreplacing, decorations.markings,
+  matrix, fit, backgrounds,
+  shapes.geometric, patterns,
+  intersections
+}
+\pgfplotsset{compat=1.18}
+
+% ============================================================
+% COLORS
+% ============================================================
+\definecolor{mathblue}{RGB}{41, 98, 255}
+\definecolor{utilgreen}{RGB}{46, 139, 87}
+\definecolor{featorange}{RGB}{255, 140, 0}
+\definecolor{modelred}{RGB}{205, 55, 55}
+\definecolor{evalpurple}{RGB}{128, 0, 128}
+\definecolor{infragray}{RGB}{100, 100, 100}
+\definecolor{codebg}{RGB}{248, 248, 248}
+\definecolor{hintblue}{RGB}{230, 240, 255}
+\definecolor{testgreen}{RGB}{230, 255, 230}
+\definecolor{warnred}{RGB}{255, 235, 235}
+
+% ============================================================
+% CUSTOM ENVIRONMENTS
+% ============================================================
+\newtcolorbox{implementhint}[1][]{
+  colback=hintblue, colframe=mathblue!70!black,
+  fonttitle=\bfseries, title={Implementation Hint}, #1
+}
+
+\newtcolorbox{testchecklist}[1][]{
+  colback=testgreen, colframe=utilgreen!70!black,
+  fonttitle=\bfseries, title={Testing Checklist}, #1
+}
+
+\newtcolorbox{keyconcept}[1][]{
+  colback=warnred, colframe=modelred!70!black,
+  fonttitle=\bfseries, title={Key Concept}, #1
+}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[chapter]
+\newtheorem{theorem}{Theorem}[chapter]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{remark}{Remark}[chapter]
+
+% ============================================================
+% CODE LISTINGS
+% ============================================================
+\lstdefinestyle{pythonstyle}{
+  language=Python,
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{mathblue}\bfseries,
+  stringstyle=\color{utilgreen},
+  commentstyle=\color{infragray}\itshape,
+  numbers=left, numberstyle=\tiny\color{infragray},
+  frame=single, rulecolor=\color{infragray!30},
+  breaklines=true, showstringspaces=false,
+  tabsize=4
+}
+\lstset{style=pythonstyle}
+
+% ============================================================
+% HEADERS / FOOTERS
+% ============================================================
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\leftmark}
+\fancyhead[R]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ============================================================
+% TITLE
+% ============================================================
+\title{
+  \vspace{-1cm}
+  {\Huge\bfseries Implementation Guide}\\[0.5cm]
+  {\LARGE Canadian University Admission Prediction System}\\[0.3cm]
+  {\Large A Linear-Algebra-First Approach}\\[1cm]
+  \begin{tikzpicture}[scale=0.8]
+    \foreach \y/\col/\txt in {
+      5/mathblue/Math Foundation,
+      4/utilgreen/Utils \& Normalization,
+      3/featorange/Feature Engineering,
+      2/modelred/Models,
+      1/evalpurple/Evaluation,
+      0/infragray/Infrastructure}{
+      \fill[\col!20] (-3,\y) rectangle (3,\y+0.8);
+      \draw[\col!70!black, thick] (-3,\y) rectangle (3,\y+0.8);
+      \node[\col!70!black, font=\bfseries] at (0,\y+0.4) {\txt};
+    }
+    \foreach \y in {0.8,1.8,2.8,3.8,4.8}{
+      \draw[-{Stealth}, thick, gray] (0,\y) -- (0,\y+0.2);
+    }
+  \end{tikzpicture}
+}
+\author{University Admission Prediction Project}
+\date{\today}
+
+% ============================================================
+\begin{document}
+% ============================================================
+
+\maketitle
+\tableofcontents
+\listoffigures
+\listofalgorithms
+
+% ============================================================
+% CHAPTER 1: SYSTEM ARCHITECTURE
+% ============================================================
+\chapter{System Architecture and Design Philosophy}
+\label{ch:architecture}
+
+\section{Project Overview}
+
+This project predicts the probability of admission to Canadian universities using self-reported applicant data collected from online forums. The system is built \emph{from scratch}, implementing core linear algebra and statistical algorithms without relying on high-level machine learning libraries.
+
+\begin{keyconcept}
+The central algorithm is \textbf{Iteratively Reweighted Least Squares (IRLS)}, which connects linear algebra (MAT223) to logistic regression (machine learning) through a chain of dependencies:
+\[
+\underbrace{\text{Vectors}}_{\text{Ch.~2}} \to
+\underbrace{\text{Matrices}}_{\text{Ch.~3}} \to
+\underbrace{\text{QR}}_{\text{Ch.~5}} \to
+\underbrace{\text{Ridge}}_{\text{Ch.~7}} \to
+\underbrace{\text{IRLS}}_{\text{Ch.~12}}
+\]
+\end{keyconcept}
+
+\subsection{Problem Formulation}
+
+Given an applicant's profile $\mathbf{x} = (\text{GPA}, \text{university}, \text{program}, \text{term}, \ldots)$, predict:
+\[
+P(\text{admit} \mid \mathbf{x}) = \sigma(\mathbf{x}^\top \boldsymbol{\beta}) = \frac{1}{1 + e^{-\mathbf{x}^\top \boldsymbol{\beta}}}
+\]
+where $\boldsymbol{\beta}$ are learned coefficients and $\sigma$ is the sigmoid function.
+
+\subsection{Data Sources}
+
+Three years of Canadian university admission results (2022--2025), each containing:
+\begin{itemize}[nosep]
+  \item Program name (inconsistent formatting)
+  \item University name (inconsistent formatting)
+  \item GPA/average (mixed scales: \%, 4.0, IB, letter)
+  \item Decision (Accepted, Rejected, Waitlisted, Deferred)
+  \item Decision date (varied formats)
+  \item Applicant type (101 = Ontario high school, 105 = other)
+\end{itemize}
+
+\section{Six-Layer Architecture}
+
+The system follows strict layered architecture where each layer depends \emph{only} on layers below it.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  layer/.style={draw, thick, minimum width=12cm, minimum height=1.2cm,
+    rounded corners=3pt, font=\bfseries},
+  arr/.style={-{Stealth}, thick, gray!60},
+  mod/.style={font=\small\ttfamily, fill=white, inner sep=2pt}
+]
+
+% Layers bottom to top
+\node[layer, fill=mathblue!15, draw=mathblue!70] (math) at (0,0)
+  {\color{mathblue!70!black}Math Foundation};
+\node[layer, fill=utilgreen!15, draw=utilgreen!70] (util) at (0,1.6)
+  {\color{utilgreen!70!black}Utils \& Normalization};
+\node[layer, fill=featorange!15, draw=featorange!70] (feat) at (0,3.2)
+  {\color{featorange!70!black}Feature Engineering};
+\node[layer, fill=modelred!15, draw=modelred!70] (model) at (0,4.8)
+  {\color{modelred!70!black}Models};
+\node[layer, fill=evalpurple!15, draw=evalpurple!70] (eval) at (0,6.4)
+  {\color{evalpurple!70!black}Evaluation};
+\node[layer, fill=infragray!15, draw=infragray!70] (infra) at (0,8.0)
+  {\color{infragray!70!black}Infrastructure (API / DB / Viz)};
+
+% Module labels
+\node[mod, below=0.05cm of math.south] {vectors \quad matrices \quad projections \quad qr \quad svd \quad ridge};
+\node[mod, below=0.05cm of util.south] {normalize (RapidFuzz + YAML mappings)};
+\node[mod, below=0.05cm of feat.south] {encoders (8 types) \quad design\_matrix (builder pattern)};
+\node[mod, below=0.05cm of model.south] {baseline \quad logistic \quad hazard \quad embeddings \quad attention};
+\node[mod, below=0.05cm of eval.south] {calibration \quad discrimination \quad validation};
+\node[mod, below=0.05cm of infra.south] {predictor (FastAPI) \quad mongo \quad weaviate \quad etl \quad viz};
+
+% Arrows
+\foreach \a/\b in {math/util, util/feat, feat/model, model/eval, eval/infra}{
+  \draw[arr] (\a.north) -- (\b.south);
+}
+
+% Side annotations
+\node[rotate=90, font=\footnotesize\itshape, gray] at (-7, 4) {Implementation Order $\longrightarrow$};
+
+\end{tikzpicture}
+\caption{Six-layer architecture. Each layer depends only on layers below it.}
+\label{fig:architecture}
+\end{figure}
+
+\section{Design Patterns}
+
+\begin{table}[H]
+\centering
+\caption{Design patterns used throughout the codebase.}
+\label{tab:patterns}
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+\textbf{Pattern} & \textbf{Where} & \textbf{Purpose} \\
+\midrule
+Abstract Base Class & \texttt{BaseModel}, \texttt{BaseEncoder}, \texttt{BaseSplitter} & Enforce consistent interfaces \\
+Builder & \texttt{DesignMatrixBuilder} & Compose feature pipelines with method chaining \\
+Strategy & Encoder and model selection & Swap algorithms at runtime \\
+Factory & \texttt{create\_university\_normalizer()} & Encapsulate construction logic \\
+Template Method & \texttt{BaseModel.evaluate()} & Shared algorithm with abstract hooks \\
+Composite & \texttt{CompositeEncoder}, \texttt{ETLPipeline} & Combine multiple components \\
+Iterator & \texttt{BaseSplitter.split()}, \texttt{BaseExtractor.extract()} & Lazy generation of data \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Module Dependency Graph}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=0.8cm and 1.5cm,
+  mod/.style={draw, rounded corners, font=\small\ttfamily, minimum width=2cm,
+    minimum height=0.6cm, thick},
+  dep/.style={-{Stealth}, thick, gray!50}
+]
+
+% Math layer
+\node[mod, fill=mathblue!15] (vec) {vectors};
+\node[mod, fill=mathblue!15, right=of vec] (mat) {matrices};
+\node[mod, fill=mathblue!15, right=of mat] (proj) {projections};
+\node[mod, fill=mathblue!15, below=of vec] (qr) {qr};
+\node[mod, fill=mathblue!15, below=of mat] (ridge) {ridge};
+\node[mod, fill=mathblue!15, below=of proj] (svd) {svd};
+
+% Utils
+\node[mod, fill=utilgreen!15, below=1.5cm of qr] (norm) {normalize};
+
+% Features
+\node[mod, fill=featorange!15, below=of norm] (enc) {encoders};
+\node[mod, fill=featorange!15, right=of enc] (dm) {design\_matrix};
+
+% Models
+\node[mod, fill=modelred!15, below=1.5cm of enc] (base) {base};
+\node[mod, fill=modelred!15, right=of base] (log) {logistic};
+\node[mod, fill=modelred!15, left=of base] (bl) {baseline};
+
+% Dependencies
+\draw[dep] (vec) -- (mat);
+\draw[dep] (mat) -- (proj);
+\draw[dep] (mat) -- (qr);
+\draw[dep] (mat) -- (svd);
+\draw[dep] (qr) -- (ridge);
+\draw[dep] (enc) -- (dm);
+\draw[dep] (ridge) -- (log);
+\draw[dep] (base) -- (log);
+\draw[dep] (base) -- (bl);
+
+\end{tikzpicture}
+\caption{Key module dependencies (simplified). Arrows indicate ``depends on.''}
+\label{fig:depgraph}
+\end{figure}
+
+\section{Source File Map}
+
+\begin{longtable}{l l r l}
+\caption{All source files with line counts and implementation status.} \label{tab:filemap} \\
+\toprule
+\textbf{Module} & \textbf{File} & \textbf{LOC} & \textbf{Status} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Module} & \textbf{File} & \textbf{LOC} & \textbf{Status} \\
+\midrule
+\endhead
+\texttt{src/math} & \texttt{vectors.py}        & 942  & 3 impl / 9 stubs \\
+\texttt{src/math} & \texttt{matrices.py}       & 1004 & 0 impl / 16 stubs \\
+\texttt{src/math} & \texttt{projections.py}    & 881  & 0 impl / 11 stubs \\
+\texttt{src/math} & \texttt{qr.py}             & 680  & 0 impl / 8 stubs \\
+\texttt{src/math} & \texttt{svd.py}            & 1056 & 0 impl / 13 stubs \\
+\texttt{src/math} & \texttt{ridge.py}          & 937  & 0 impl / 9 stubs \\
+\midrule
+\texttt{src/utils} & \texttt{normalize.py}     & 1314 & 0 impl / 20 stubs \\
+\midrule
+\texttt{src/features} & \texttt{encoders.py}      & 1488 & 0 impl / 73 stubs \\
+\texttt{src/features} & \texttt{design\_matrix.py} & 1551 & 0 impl / 58 stubs \\
+\midrule
+\texttt{src/models} & \texttt{base.py}          & 883  & Partial (ABC) \\
+\texttt{src/models} & \texttt{baseline.py}      & 742  & Partial \\
+\texttt{src/models} & \texttt{logistic.py}      & 835  & Mostly stubs \\
+\texttt{src/models} & \texttt{hazard.py}        & 713  & All stubs \\
+\texttt{src/models} & \texttt{embeddings.py}    & 760  & All stubs \\
+\texttt{src/models} & \texttt{attention.py}     & 746  & All stubs \\
+\midrule
+\texttt{src/evaluation} & \texttt{calibration.py}     & 1211 & All stubs \\
+\texttt{src/evaluation} & \texttt{discrimination.py}  & 1102 & All stubs \\
+\texttt{src/evaluation} & \texttt{validation.py}      & 984  & All stubs \\
+\midrule
+\texttt{src/api}  & \texttt{predictor.py}     & 1270 & All stubs \\
+\texttt{src/db}   & \texttt{etl.py}           & 1085 & All stubs \\
+\texttt{src/db}   & \texttt{mongo.py}         & 1123 & All stubs \\
+\texttt{src/db}   & \texttt{weaviate\_client.py} & 947 & All stubs \\
+\texttt{src/viz}  & \texttt{eval\_viz.py}     & 1466 & All stubs \\
+\texttt{src/viz}  & \texttt{math\_viz.py}     & 1459 & All stubs \\
+\bottomrule
+\end{longtable}
+
+\section{Implementation Roadmap}
+
+Follow this order to minimize blocked dependencies:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Phase 1} (Ch.~2--4): Vectors $\to$ Matrices $\to$ Projections
+  \item \textbf{Phase 2} (Ch.~5--7): QR $\to$ Ridge, SVD (independent)
+  \item \textbf{Phase 3} (Ch.~8): Normalization utilities
+  \item \textbf{Phase 4} (Ch.~9--10): Encoders $\to$ Design matrix
+  \item \textbf{Phase 5} (Ch.~11--12): Baseline model $\to$ Logistic regression (IRLS)
+  \item \textbf{Phase 6} (Ch.~16): Evaluation metrics
+  \item \textbf{Phase 7} (Ch.~13--15): Advanced models (hazard, embeddings, attention)
+  \item \textbf{Phase 8} (Ch.~17--18): Infrastructure and visualization
+\end{enumerate}
+
+\section{How to Use This Guide}
+
+Each chapter follows a consistent structure:
+\begin{enumerate}[nosep]
+  \item \textbf{Mathematical background} --- derivations and theorems
+  \item \textbf{Visual diagrams} --- TikZ illustrations of key concepts
+  \item \textbf{Pseudocode} --- algorithms to implement
+  \item \textbf{Implementation hints} --- practical tips (blue boxes)
+  \item \textbf{Testing checklist} --- verification criteria (green boxes)
+\end{enumerate}
+
+The stub functions are already defined in the source code with complete docstrings. Your task is to replace the \texttt{pass} statements with working implementations, guided by the pseudocode and hints in each chapter.
+
+
+% ============================================================
+% CHAPTER 2: VECTOR OPERATIONS
+% ============================================================
+\chapter{Vector Operations}
+\label{ch:vectors}
+
+\begin{center}
+\texttt{src/math/vectors.py} --- 12 functions, 3 implemented, 9 stubs
+\end{center}
+
+\section{Vectors in $\mathbb{R}^n$}
+
+\begin{definition}[Vector]
+A \textbf{vector} $\mathbf{v} \in \mathbb{R}^n$ is an ordered tuple of $n$ real numbers:
+\[
+\mathbf{v} = \begin{pmatrix} v_1 \\ v_2 \\ \vdots \\ v_n \end{pmatrix}
+\]
+In the codebase, vectors are represented as NumPy arrays or Python lists, converted via the helper \texttt{\_ensure\_numpy(v)}.
+\end{definition}
+
+The three \emph{already implemented} functions are:
+\begin{itemize}[nosep]
+  \item \texttt{\_ensure\_numpy(v)} --- converts lists to \texttt{np.ndarray}
+  \item \texttt{add(u, v)} --- element-wise addition
+  \item \texttt{scale(alpha, v)} --- scalar multiplication
+\end{itemize}
+
+\section{Dot Product}
+
+\begin{definition}[Dot Product]
+For $\mathbf{u}, \mathbf{v} \in \mathbb{R}^n$:
+\[
+\mathbf{u} \cdot \mathbf{v} = \sum_{i=1}^{n} u_i v_i = u_1 v_1 + u_2 v_2 + \cdots + u_n v_n
+\]
+\end{definition}
+
+\begin{theorem}[Geometric Interpretation]
+\[
+\mathbf{u} \cdot \mathbf{v} = \|\mathbf{u}\| \, \|\mathbf{v}\| \cos\theta
+\]
+where $\theta$ is the angle between $\mathbf{u}$ and $\mathbf{v}$.
+\end{theorem}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=1.5, >=Stealth]
+  % Vectors
+  \draw[->, thick, mathblue] (0,0) -- (3,1) node[midway, above] {$\mathbf{u}$};
+  \draw[->, thick, modelred] (0,0) -- (2,2.5) node[midway, left] {$\mathbf{v}$};
+
+  % Angle arc
+  \draw[thick] (0.6,0.2) arc[start angle=18, end angle=51, radius=0.63];
+  \node at (0.85, 0.65) {$\theta$};
+
+  % Projection (dashed)
+  \draw[dashed, gray] (2,2.5) -- (2.46, 0.82);
+  \draw[->, thick, utilgreen] (0,0) -- (2.46, 0.82)
+    node[midway, below right, font=\small] {$\text{proj}_{\mathbf{u}}\mathbf{v}$};
+
+  % Right angle
+  \draw[gray] (2.25, 1.05) -- (2.15, 0.85) -- (2.35, 0.75);
+\end{tikzpicture}
+\caption{Geometric interpretation of the dot product and projection.}
+\label{fig:dotproduct}
+\end{figure}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{Vectors $\mathbf{u}, \mathbf{v}$ of length $n$}
+\KwOut{Scalar $\mathbf{u} \cdot \mathbf{v}$}
+$\text{result} \gets 0$\;
+\For{$i \gets 1$ \KwTo $n$}{
+  $\text{result} \gets \text{result} + u_i \cdot v_i$\;
+}
+\Return{result}\;
+\caption{\texttt{dot(u, v)}}
+\label{alg:dot}
+\end{algorithm}
+
+\section{Norms}
+
+\begin{definition}[$p$-Norm]
+For $\mathbf{v} \in \mathbb{R}^n$ and $p \geq 1$:
+\[
+\|\mathbf{v}\|_p = \left( \sum_{i=1}^{n} |v_i|^p \right)^{1/p}
+\]
+Special cases:
+\begin{align}
+\|\mathbf{v}\|_1 &= |v_1| + |v_2| + \cdots + |v_n| & &\text{(Manhattan)} \\
+\|\mathbf{v}\|_2 &= \sqrt{v_1^2 + v_2^2 + \cdots + v_n^2} & &\text{(Euclidean)} \\
+\|\mathbf{v}\|_\infty &= \max(|v_1|, |v_2|, \ldots, |v_n|) & &\text{(Chebyshev)}
+\end{align}
+\end{definition}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=2]
+  % Axes
+  \draw[->] (-1.3,0) -- (1.3,0) node[right] {$v_1$};
+  \draw[->] (0,-1.3) -- (0,1.3) node[above] {$v_2$};
+
+  % L-infinity (square)
+  \fill[infragray!10] (-1,-1) rectangle (1,1);
+  \draw[infragray, thick] (-1,-1) rectangle (1,1);
+
+  % L2 (circle)
+  \fill[mathblue!10] (0,0) circle (1);
+  \draw[mathblue, thick] (0,0) circle (1);
+
+  % L1 (diamond)
+  \fill[modelred!10] (0,1) -- (1,0) -- (0,-1) -- (-1,0) -- cycle;
+  \draw[modelred, thick] (0,1) -- (1,0) -- (0,-1) -- (-1,0) -- cycle;
+
+  % Legend
+  \node[modelred, font=\small\bfseries] at (1.8, 0.8) {$\|\mathbf{v}\|_1 = 1$};
+  \node[mathblue, font=\small\bfseries] at (1.8, 0.4) {$\|\mathbf{v}\|_2 = 1$};
+  \node[infragray, font=\small\bfseries] at (1.8, 0.0) {$\|\mathbf{v}\|_\infty = 1$};
+\end{tikzpicture}
+\caption{Unit balls for $L^1$ (diamond), $L^2$ (circle), and $L^\infty$ (square) norms in $\mathbb{R}^2$.}
+\label{fig:normballs}
+\end{figure}
+
+\begin{remark}
+For the Euclidean norm, $\|\mathbf{v}\|_2 = \sqrt{\mathbf{v} \cdot \mathbf{v}}$. This reuses \texttt{dot()}.
+\end{remark}
+
+\section{Normalization and Angles}
+
+\begin{definition}[Unit Vector]
+$\hat{\mathbf{v}} = \dfrac{\mathbf{v}}{\|\mathbf{v}\|_2}$ satisfies $\|\hat{\mathbf{v}}\|_2 = 1$.
+\end{definition}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{Vector $\mathbf{v}$ with $\|\mathbf{v}\| > 0$}
+\KwOut{Unit vector $\hat{\mathbf{v}}$}
+$n \gets \texttt{norm}(\mathbf{v}, 2)$\;
+\If{$n < \varepsilon$}{
+  \textbf{raise} ZeroDivisionError\;
+}
+\Return{$\texttt{scale}(1/n, \; \mathbf{v})$}\;
+\caption{\texttt{normalize(v)}}
+\label{alg:normalize}
+\end{algorithm}
+
+The angle between two vectors:
+\[
+\theta = \arccos\!\left(\frac{\mathbf{u} \cdot \mathbf{v}}{\|\mathbf{u}\| \, \|\mathbf{v}\|}\right)
+\]
+
+\textbf{Cosine similarity} is the same quantity without the $\arccos$:
+\[
+\text{cosine\_similarity}(\mathbf{u}, \mathbf{v}) = \frac{\mathbf{u} \cdot \mathbf{v}}{\|\mathbf{u}\| \, \|\mathbf{v}\|} \in [-1, 1]
+\]
+
+\section{Orthogonality}
+
+\begin{definition}
+$\mathbf{u} \perp \mathbf{v}$ (orthogonal) $\iff$ $\mathbf{u} \cdot \mathbf{v} = 0$.
+\end{definition}
+
+\begin{theorem}[Cauchy--Schwarz Inequality]
+\[
+|\mathbf{u} \cdot \mathbf{v}| \leq \|\mathbf{u}\| \, \|\mathbf{v}\|
+\]
+with equality iff $\mathbf{u}$ and $\mathbf{v}$ are parallel.
+\end{theorem}
+
+The function \texttt{verify\_cauchy\_schwarz(u, v)} checks this inequality holds numerically.
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item \texttt{dot(u, v)}: Use \texttt{np.dot(u, v)} or a manual loop.
+  \item \texttt{norm(v, p=2)}: For $p=2$, use $\sqrt{\texttt{dot}(\mathbf{v}, \mathbf{v})}$. General: \texttt{np.sum(np.abs(v)**p)**(1/p)}.
+  \item \texttt{normalize(v)}: Guard against $\|\mathbf{v}\| < 10^{-10}$ before dividing.
+  \item \texttt{cosine\_similarity}: Reuse \texttt{dot()} and \texttt{norm()} --- composability.
+  \item \texttt{is\_orthogonal(u, v, tol)}: Check $|\texttt{dot}(u,v)| < \texttt{tol}$.
+  \item \texttt{linear\_combination(scalars, vectors)}: Loop and accumulate \texttt{scale} + \texttt{add}.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] \texttt{dot([1,0], [0,1]) == 0} (orthogonal vectors)
+  \item[$\square$] \texttt{norm([3,4]) == 5.0} (Pythagorean triple)
+  \item[$\square$] \texttt{normalize([3,4])} has unit norm within $\texttt{tol}=10^{-10}$
+  \item[$\square$] \texttt{cosine\_similarity(v, v) == 1.0} for any nonzero $\mathbf{v}$
+  \item[$\square$] \texttt{angle([1,0], [0,1]) == $\pi/2$}
+  \item[$\square$] \texttt{verify\_cauchy\_schwarz} returns \texttt{True} for random vectors
+  \item[$\square$] Zero vector raises error in \texttt{normalize}
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 3: MATRIX OPERATIONS
+% ============================================================
+\chapter{Matrix Operations}
+\label{ch:matrices}
+
+\begin{center}
+\texttt{src/math/matrices.py} --- 16 functions, all stubs
+\end{center}
+
+\section{Matrix Representation}
+
+\begin{definition}[Matrix]
+An $m \times n$ matrix $A$ has $m$ rows and $n$ columns:
+\[
+A = \begin{pmatrix}
+a_{11} & a_{12} & \cdots & a_{1n} \\
+a_{21} & a_{22} & \cdots & a_{2n} \\
+\vdots & \vdots & \ddots & \vdots \\
+a_{m1} & a_{m2} & \cdots & a_{mn}
+\end{pmatrix}
+\]
+Represented as 2D NumPy arrays with shape \texttt{(m, n)}.
+\end{definition}
+
+\section{Transpose and Multiplication}
+
+\textbf{Transpose:} $A^\top$ swaps rows and columns: $(A^\top)_{ij} = A_{ji}$.
+
+\textbf{Matrix multiplication:} For $A \in \mathbb{R}^{m \times n}$ and $B \in \mathbb{R}^{n \times p}$:
+\[
+(AB)_{ij} = \sum_{k=1}^{n} A_{ik} B_{kj}
+\]
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=0.6]
+  % Matrix A
+  \draw[thick, mathblue] (0,0) rectangle (3,4);
+  \node at (1.5, 4.5) {$A$};
+  \node[font=\small] at (1.5, -0.5) {$m \times n$};
+  % Highlight row
+  \fill[mathblue!20] (0,2.5) rectangle (3,3.5);
+  \draw[->, thick, mathblue] (3.2, 3) -- (4.8, 3);
+
+  % Matrix B
+  \draw[thick, modelred] (5,0) rectangle (9,4);
+  \node at (7, 4.5) {$B$};
+  \node[font=\small] at (7, -0.5) {$n \times p$};
+  % Highlight column
+  \fill[modelred!20] (6,0) rectangle (7,4);
+  \draw[->, thick, modelred] (6.5, -0.3) -- (6.5, -1.3);
+
+  % Equals
+  \node[font=\Large] at (10, 2) {$=$};
+
+  % Matrix C
+  \draw[thick, evalpurple] (11,0) rectangle (15,4);
+  \node at (13, 4.5) {$C$};
+  \node[font=\small] at (13, -0.5) {$m \times p$};
+  % Highlight cell
+  \fill[evalpurple!30] (12,2.5) rectangle (13,3.5);
+  \node[font=\small] at (12.5, 3) {$c_{ij}$};
+
+  % Annotation
+  \draw[decorate, decoration={brace, amplitude=5pt}] (15.3, 2.5) -- (15.3, 3.5);
+  \node[font=\small, right] at (15.5, 3) {$= \text{row}_i(A) \cdot \text{col}_j(B)$};
+\end{tikzpicture}
+\caption{Matrix multiplication: $C_{ij}$ is the dot product of row $i$ of $A$ and column $j$ of $B$.}
+\label{fig:matmul}
+\end{figure}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{$A$ of shape $(m,n)$, $B$ of shape $(n,p)$}
+\KwOut{$C = AB$ of shape $(m,p)$}
+$C \gets \mathbf{0}_{m \times p}$\;
+\For{$i \gets 1$ \KwTo $m$}{
+  \For{$j \gets 1$ \KwTo $p$}{
+    \For{$k \gets 1$ \KwTo $n$}{
+      $C_{ij} \gets C_{ij} + A_{ik} \cdot B_{kj}$\;
+    }
+  }
+}
+\Return{$C$}\;
+\caption{\texttt{matrix\_multiply(A, B)}}
+\end{algorithm}
+
+\section{Gram Matrix}
+
+\begin{definition}[Gram Matrix]
+For $X \in \mathbb{R}^{m \times n}$:
+\[
+G = X^\top X \in \mathbb{R}^{n \times n}
+\]
+Properties:
+\begin{itemize}[nosep]
+  \item $G$ is symmetric: $G = G^\top$
+  \item $G$ is positive semi-definite: $\mathbf{z}^\top G \mathbf{z} \geq 0$ for all $\mathbf{z}$
+  \item Diagonal: $G_{jj} = \|\mathbf{x}_j\|^2$ (squared norm of column $j$)
+  \item Off-diagonal: $G_{ij} = \mathbf{x}_i \cdot \mathbf{x}_j$ (dot product of columns)
+\end{itemize}
+\end{definition}
+
+\begin{keyconcept}
+The Gram matrix appears in the \textbf{normal equations} $X^\top X \boldsymbol{\beta} = X^\top \mathbf{y}$ (Chapter~\ref{ch:projections}) and in \textbf{ridge regression} $(X^\top X + \lambda I)\boldsymbol{\beta} = X^\top \mathbf{y}$ (Chapter~\ref{ch:ridge}).
+\end{keyconcept}
+
+\section{Rank and Conditioning}
+
+The \textbf{condition number} measures sensitivity to perturbations:
+\[
+\kappa(A) = \frac{\sigma_{\max}}{\sigma_{\min}}
+\]
+where $\sigma_{\max}$ and $\sigma_{\min}$ are the largest and smallest singular values (Chapter~\ref{ch:svd}).
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=0.8]
+  % Color zones
+  \fill[utilgreen!20] (0,0) rectangle (4,1.5);
+  \fill[featorange!20] (4,0) rectangle (8,1.5);
+  \fill[modelred!20] (8,0) rectangle (12,1.5);
+
+  % Bar
+  \draw[thick] (0,0) rectangle (12,1.5);
+
+  % Labels
+  \node[font=\small\bfseries, utilgreen!70!black] at (2, 0.75) {Well-conditioned};
+  \node[font=\small\bfseries, featorange!70!black] at (6, 0.75) {Moderate};
+  \node[font=\small\bfseries, modelred!70!black] at (10, 0.75) {Ill-conditioned};
+
+  % Markers
+  \node[font=\small] at (0, -0.4) {$\kappa = 1$};
+  \node[font=\small] at (4, -0.4) {$\kappa = 10^2$};
+  \node[font=\small] at (8, -0.4) {$\kappa = 10^6$};
+  \node[font=\small] at (12, -0.4) {$\kappa \to \infty$};
+\end{tikzpicture}
+\caption{Condition number spectrum. Ridge regression (Chapter~\ref{ch:ridge}) improves conditioning.}
+\label{fig:condnumber}
+\end{figure}
+
+\section{Utility Operations}
+
+\begin{align}
+\texttt{identity}(n) &: I_n, \quad I_{ij} = \delta_{ij} \\
+\texttt{diagonal\_matrix}(\mathbf{d}) &: D_{ii} = d_i, \quad D_{ij} = 0 \text{ for } i \neq j \\
+\texttt{add\_ridge}(A, \lambda) &: A + \lambda I \\
+\texttt{outer\_product}(\mathbf{u}, \mathbf{v}) &: \mathbf{u}\mathbf{v}^\top, \quad \text{rank-1 matrix} \\
+\texttt{trace}(A) &: \sum_i A_{ii} \\
+\texttt{frobenius\_norm}(A) &: \sqrt{\sum_{i,j} A_{ij}^2} = \sqrt{\operatorname{trace}(A^\top A)}
+\end{align}
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item \texttt{gram\_matrix(X)}: Use \texttt{matrix\_multiply(transpose(X), X)} --- reuse your own functions.
+  \item \texttt{condition\_number}: Needs SVD (Ch.~\ref{ch:svd}); temporarily use \texttt{np.linalg.cond}.
+  \item \texttt{add\_ridge(A, lam)}: Simply \texttt{A + lam * np.eye(A.shape[0])}.
+  \item \texttt{is\_positive\_definite}: Try Cholesky (\texttt{np.linalg.cholesky}); if it succeeds, PD.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] \texttt{matrix\_multiply(I, A) == A} (identity is neutral element)
+  \item[$\square$] \texttt{transpose(transpose(A)) == A} (involution)
+  \item[$\square$] Gram matrix is symmetric within tolerance
+  \item[$\square$] \texttt{is\_positive\_definite} returns True for $I$, False for $-I$
+  \item[$\square$] \texttt{trace(identity(5)) == 5}
+  \item[$\square$] \texttt{frobenius\_norm(identity(3)) == $\sqrt{3}$}
+  \item[$\square$] \texttt{condition\_number(identity(n)) == 1.0}
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 4: PROJECTIONS AND LEAST SQUARES
+% ============================================================
+\chapter{Projections and Least Squares}
+\label{ch:projections}
+
+\begin{center}
+\texttt{src/math/projections.py} --- 11 functions, all stubs
+\end{center}
+
+\section{Vector Projection}
+
+\begin{definition}[Projection onto a Vector]
+The projection of $\mathbf{v}$ onto $\mathbf{u}$ is:
+\[
+\operatorname{proj}_{\mathbf{u}} \mathbf{v} = \frac{\mathbf{v} \cdot \mathbf{u}}{\mathbf{u} \cdot \mathbf{u}} \, \mathbf{u}
+\]
+\end{definition}
+
+\begin{proof}[Derivation]
+Minimize $\|\mathbf{v} - \alpha \mathbf{u}\|^2$ over scalar $\alpha$:
+\begin{align}
+\frac{d}{d\alpha} \|\mathbf{v} - \alpha \mathbf{u}\|^2
+  &= \frac{d}{d\alpha}\bigl(\mathbf{v} \cdot \mathbf{v} - 2\alpha (\mathbf{u} \cdot \mathbf{v}) + \alpha^2 (\mathbf{u} \cdot \mathbf{u})\bigr) \\
+  &= -2(\mathbf{u} \cdot \mathbf{v}) + 2\alpha(\mathbf{u} \cdot \mathbf{u}) = 0 \\
+\implies \alpha^* &= \frac{\mathbf{u} \cdot \mathbf{v}}{\mathbf{u} \cdot \mathbf{u}}
+\end{align}
+The \textbf{residual} $\mathbf{r} = \mathbf{v} - \operatorname{proj}_{\mathbf{u}}\mathbf{v}$ is orthogonal to $\mathbf{u}$: $\mathbf{r} \cdot \mathbf{u} = 0$.
+\end{proof}
+
+\section{Subspace Projection and the Hat Matrix}
+
+For a matrix $X \in \mathbb{R}^{m \times n}$ with full column rank, the \textbf{hat matrix} projects onto the column space of $X$:
+\[
+H = X(X^\top X)^{-1} X^\top
+\]
+
+\begin{theorem}[Properties of $H$]
+\begin{enumerate}[nosep]
+  \item Symmetric: $H = H^\top$
+  \item Idempotent: $H^2 = H$
+  \item $H\mathbf{y} = \hat{\mathbf{y}}$ (fitted values)
+  \item $(I - H)\mathbf{y} = \mathbf{e}$ (residuals)
+  \item $\operatorname{trace}(H) = n$ (number of columns in $X$)
+\end{enumerate}
+\end{theorem}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=1.2, >=Stealth]
+  % Column space plane
+  \fill[mathblue!10] (-2,-0.5) -- (3,-0.5) -- (3.5,1) -- (-1.5,1) -- cycle;
+  \node[mathblue!70!black, font=\small] at (3.2, 0.5) {$\mathcal{C}(X)$};
+
+  % y vector
+  \draw[->, very thick, modelred] (0,0) -- (2, 2.5) node[right] {$\mathbf{y}$};
+
+  % y-hat (projection)
+  \draw[->, very thick, utilgreen] (0,0) -- (2.3, 0.3)
+    node[right, font=\small] {$\hat{\mathbf{y}} = H\mathbf{y}$};
+
+  % Residual
+  \draw[->, thick, dashed, evalpurple] (2.3, 0.3) -- (2, 2.5)
+    node[midway, right, font=\small] {$\mathbf{e} = (I{-}H)\mathbf{y}$};
+
+  % Right angle marker
+  \draw[thick, gray] (2.15, 0.55) -- (2.0, 0.45) -- (2.1, 0.25);
+
+  % Origin
+  \fill (0,0) circle (2pt);
+\end{tikzpicture}
+\caption{Projection of $\mathbf{y}$ onto the column space $\mathcal{C}(X)$. The residual $\mathbf{e}$ is orthogonal to $\mathcal{C}(X)$.}
+\label{fig:subspace_proj}
+\end{figure}
+
+\section{Normal Equations (OLS)}
+
+\begin{keyconcept}
+Ordinary Least Squares minimizes $\|\mathbf{y} - X\boldsymbol{\beta}\|^2$:
+\begin{align}
+\nabla_{\boldsymbol{\beta}} \|\mathbf{y} - X\boldsymbol{\beta}\|^2
+  &= -2X^\top(\mathbf{y} - X\boldsymbol{\beta}) = \mathbf{0} \\
+\implies X^\top X \boldsymbol{\beta} &= X^\top \mathbf{y} \qquad \text{(Normal Equations)}
+\end{align}
+\end{keyconcept}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{$X \in \mathbb{R}^{m \times n}$ (full column rank), $\mathbf{y} \in \mathbb{R}^m$}
+\KwOut{$\hat{\boldsymbol{\beta}}$ minimizing $\|\mathbf{y} - X\boldsymbol{\beta}\|^2$}
+$G \gets X^\top X$ \tcp*{Gram matrix}
+$\mathbf{b} \gets X^\top \mathbf{y}$\;
+$\hat{\boldsymbol{\beta}} \gets \texttt{solve}(G, \mathbf{b})$ \tcp*{Never explicitly invert!}
+\Return{$\hat{\boldsymbol{\beta}}$}\;
+\caption{\texttt{solve\_normal\_equations(X, y)}}
+\end{algorithm}
+
+\section{Weighted Least Squares}
+
+Minimize $(\mathbf{y} - X\boldsymbol{\beta})^\top W (\mathbf{y} - X\boldsymbol{\beta})$ where $W = \operatorname{diag}(w_1, \ldots, w_m)$:
+\[
+X^\top W X \boldsymbol{\beta} = X^\top W \mathbf{y}
+\]
+
+This is \emph{critical} for IRLS (Chapter~\ref{ch:irls}), where weights $w_i = p_i(1 - p_i)$ change each iteration.
+
+\section{Leverage and $R^2$}
+
+\textbf{Leverage} $h_{ii}$ is the $i$-th diagonal of $H$. High leverage $\implies$ observation $i$ has outsized influence.
+
+\[
+R^2 = 1 - \frac{\text{SS}_{\text{res}}}{\text{SS}_{\text{tot}}} = 1 - \frac{\sum(y_i - \hat{y}_i)^2}{\sum(y_i - \bar{y})^2}
+\]
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item \texttt{project\_onto\_vector(v, u)}: $\frac{\texttt{dot}(v,u)}{\texttt{dot}(u,u)} \cdot u$. Reuse \texttt{dot()} and \texttt{scale()}.
+  \item \texttt{solve\_normal\_equations}: Use \texttt{np.linalg.solve(G, b)}, never \texttt{np.linalg.inv(G) @ b}.
+  \item \texttt{compute\_hat\_matrix}: $H = X (X^\top X)^{-1} X^\top$. Use \texttt{np.linalg.solve} for the inner part.
+  \item \texttt{compute\_leverage}: Diagonal of $H$: \texttt{np.diag(H)}.
+  \item \texttt{verify\_orthogonality}: Check $\|X^\top \mathbf{r}\|_\infty < \texttt{tol}$.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] $\operatorname{proj}_{\mathbf{u}} \mathbf{u} = \mathbf{u}$ for any nonzero $\mathbf{u}$
+  \item[$\square$] Residual is orthogonal: \texttt{verify\_orthogonality} passes
+  \item[$\square$] Hat matrix is idempotent: $H^2 \approx H$
+  \item[$\square$] Hat matrix is symmetric: $H \approx H^\top$
+  \item[$\square$] Leverage values sum to $n$
+  \item[$\square$] $R^2 \in [0, 1]$ for well-specified models
+  \item[$\square$] \texttt{solve\_normal\_equations} matches \texttt{np.linalg.lstsq}
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 5: QR FACTORIZATION
+% ============================================================
+\chapter{QR Factorization}
+\label{ch:qr}
+
+\begin{center}
+\texttt{src/math/qr.py} --- 8 functions, all stubs
+\end{center}
+
+\section{Why QR?}
+
+\begin{keyconcept}
+The normal equations $X^\top X \boldsymbol{\beta} = X^\top \mathbf{y}$ are numerically unstable because:
+\[
+\kappa(X^\top X) = \kappa(X)^2
+\]
+A moderate $\kappa(X) = 10^3$ becomes $\kappa(X^\top X) = 10^6$, losing 6 digits of precision. QR factorization avoids forming $X^\top X$ entirely.
+\end{keyconcept}
+
+\section{Householder Reflections}
+
+\begin{definition}[Householder Reflector]
+Given a vector $\mathbf{v} \neq \mathbf{0}$, the Householder matrix is:
+\[
+H_{\mathbf{v}} = I - 2\frac{\mathbf{v}\mathbf{v}^\top}{\mathbf{v}^\top \mathbf{v}}
+\]
+Properties: $H_{\mathbf{v}}$ is \emph{orthogonal} ($H^\top H = I$), \emph{symmetric} ($H = H^\top$), and \emph{involutory} ($H^2 = I$).
+\end{definition}
+
+To zero out entries below $x_1$ in vector $\mathbf{x}$, choose:
+\[
+\mathbf{v} = \mathbf{x} + \operatorname{sign}(x_1)\|\mathbf{x}\| \, \mathbf{e}_1
+\]
+Then $H_{\mathbf{v}}\mathbf{x} = -\operatorname{sign}(x_1)\|\mathbf{x}\|\,\mathbf{e}_1$.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=1.5, >=Stealth]
+  % Reflection plane
+  \draw[dashed, gray, thick] (-0.5, 2.5) -- (2.5, -0.5)
+    node[near end, below right, font=\small, gray] {reflection plane};
+
+  % Original vector
+  \draw[->, very thick, mathblue] (0,0) -- (2.2, 1.5) node[right] {$\mathbf{x}$};
+
+  % Reflected vector
+  \draw[->, very thick, modelred] (0,0) -- (1.5, -2.2) node[right] {$H\mathbf{x} = \|\mathbf{x}\|\mathbf{e}_1$};
+
+  % Householder vector v
+  \draw[->, thick, dashed, utilgreen] (2.2, 1.5) -- (1.5, -2.2);
+  \node[utilgreen!70!black, font=\small] at (2.8, -0.3) {$\mathbf{v} = \mathbf{x} - H\mathbf{x}$};
+
+  % Origin
+  \fill (0,0) circle (1.5pt);
+\end{tikzpicture}
+\caption{Householder reflection: $\mathbf{x}$ is reflected across the hyperplane perpendicular to $\mathbf{v}$, mapping it onto the $\mathbf{e}_1$ axis.}
+\label{fig:householder}
+\end{figure}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{Vector $\mathbf{x} \in \mathbb{R}^m$}
+\KwOut{Householder vector $\mathbf{v}$ such that $H_\mathbf{v}\mathbf{x} = \|\mathbf{x}\|\mathbf{e}_1$}
+$\sigma \gets \operatorname{sign}(x_1) \cdot \|\mathbf{x}\|$\;
+$\mathbf{v} \gets \text{copy}(\mathbf{x})$\;
+$v_1 \gets v_1 + \sigma$\;
+$\mathbf{v} \gets \mathbf{v} / \|\mathbf{v}\|$\;
+\Return{$\mathbf{v}$}\;
+\caption{\texttt{householder\_vector(x)}}
+\end{algorithm}
+
+\section{QR Decomposition}
+
+Apply successive Householder reflections column by column:
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{$A \in \mathbb{R}^{m \times n}$, $m \geq n$}
+\KwOut{$Q \in \mathbb{R}^{m \times m}$ (orthogonal), $R \in \mathbb{R}^{m \times n}$ (upper triangular)}
+$R \gets \text{copy}(A)$; \quad $Q \gets I_m$\;
+\For{$k \gets 1$ \KwTo $n$}{
+  $\mathbf{v} \gets \texttt{householder\_vector}(R_{k:m,\, k})$\;
+  $R_{k:m,\, k:n} \gets R_{k:m,\, k:n} - 2\mathbf{v}(\mathbf{v}^\top R_{k:m,\, k:n})$ \tcp*{apply\_householder}
+  $Q_{:,\, k:m} \gets Q_{:,\, k:m} - 2(Q_{:,\, k:m}\,\mathbf{v})\mathbf{v}^\top$\;
+}
+\Return{$Q, R$}\;
+\caption{\texttt{qr\_householder(A)}}
+\end{algorithm}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=0.5, font=\small]
+  % Step 0: Original
+  \node at (2, 5) {\textbf{Original}};
+  \foreach \i in {0,...,3} \foreach \j in {0,...,2} {
+    \fill[mathblue!30] (\j, 3-\i) rectangle (\j+1, 4-\i);
+    \draw (\j, 3-\i) rectangle (\j+1, 4-\i);
+    \node at (\j+0.5, 3.5-\i) {$\star$};
+  }
+
+  % Step 1
+  \begin{scope}[xshift=5cm]
+  \node at (2, 5) {\textbf{After $H_1$}};
+  % First column: only top entry nonzero
+  \fill[utilgreen!30] (0,3) rectangle (1,4);
+  \draw (0,3) rectangle (1,4);
+  \node at (0.5,3.5) {$r_{11}$};
+  \foreach \i in {1,...,3} {
+    \fill[utilgreen!10] (0, 3-\i) rectangle (1, 4-\i);
+    \draw (0, 3-\i) rectangle (1, 4-\i);
+    \node[gray] at (0.5, 3.5-\i) {$0$};
+  }
+  % Remaining
+  \foreach \i in {0,...,3} \foreach \j in {1,...,2} {
+    \fill[mathblue!30] (\j, 3-\i) rectangle (\j+1, 4-\i);
+    \draw (\j, 3-\i) rectangle (\j+1, 4-\i);
+    \node at (\j+0.5, 3.5-\i) {$\star$};
+  }
+  \end{scope}
+
+  % Step 2
+  \begin{scope}[xshift=10cm]
+  \node at (2, 5) {\textbf{After $H_2$}};
+  \fill[utilgreen!30] (0,3) rectangle (1,4);
+  \draw (0,3) rectangle (1,4); \node at (0.5,3.5) {$r_{11}$};
+  \fill[utilgreen!30] (1,3) rectangle (2,4);
+  \draw (1,3) rectangle (2,4); \node at (1.5,3.5) {$r_{12}$};
+  \fill[utilgreen!30] (1,2) rectangle (2,3);
+  \draw (1,2) rectangle (2,3); \node at (1.5,2.5) {$r_{22}$};
+  % Zeros
+  \foreach \i in {1,...,3} {
+    \fill[utilgreen!10] (0, 3-\i) rectangle (1, 4-\i);
+    \draw (0, 3-\i) rectangle (1, 4-\i);
+    \node[gray] at (0.5, 3.5-\i) {$0$};
+  }
+  \foreach \i in {2,...,3} {
+    \fill[utilgreen!10] (1, 3-\i) rectangle (2, 4-\i);
+    \draw (1, 3-\i) rectangle (2, 4-\i);
+    \node[gray] at (1.5, 3.5-\i) {$0$};
+  }
+  \foreach \i in {0,...,3} {
+    \fill[mathblue!30] (2, 3-\i) rectangle (3, 4-\i);
+    \draw (2, 3-\i) rectangle (3, 4-\i);
+    \node at (2.5, 3.5-\i) {$\star$};
+  }
+  \end{scope}
+\end{tikzpicture}
+\caption{QR decomposition proceeds column by column, zeroing entries below the diagonal with Householder reflections.}
+\label{fig:qrprocess}
+\end{figure}
+
+\section{Solving via QR}
+
+From $A = QR$: the system $A\boldsymbol{\beta} = \mathbf{y}$ becomes $R\boldsymbol{\beta} = Q^\top \mathbf{y}$ (upper triangular, solvable by back substitution).
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{Upper triangular $R \in \mathbb{R}^{n \times n}$, $\mathbf{b} \in \mathbb{R}^n$}
+\KwOut{$\mathbf{x}$ such that $R\mathbf{x} = \mathbf{b}$}
+\For{$i \gets n$ \KwTo $1$}{
+  $x_i \gets \dfrac{b_i - \sum_{j=i+1}^{n} R_{ij} x_j}{R_{ii}}$\;
+}
+\Return{$\mathbf{x}$}\;
+\caption{\texttt{back\_substitution(R, b)}}
+\end{algorithm}
+
+\textbf{Weighted QR} for $W^{1/2}X\boldsymbol{\beta} = W^{1/2}\mathbf{y}$: transform inputs, then apply standard QR. Used by IRLS (Chapter~\ref{ch:irls}).
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item \texttt{apply\_householder(v, A)}: Use rank-1 update $A - 2\mathbf{v}(\mathbf{v}^\top A)/(\mathbf{v}^\top\mathbf{v})$. Never form the full $m \times m$ matrix.
+  \item \texttt{solve\_via\_qr(X, y)}: Compute $Q, R$, then \texttt{back\_substitution(R[:n,:n], (Q.T @ y)[:n])}.
+  \item Sign convention in \texttt{householder\_vector}: use $\operatorname{sign}(x_1)$ to avoid catastrophic cancellation.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] \texttt{check\_qr\_factorization}: $\|QR - A\| < 10^{-10}$
+  \item[$\square$] $Q$ is orthogonal: $\|Q^\top Q - I\| < 10^{-10}$
+  \item[$\square$] $R$ is upper triangular (below-diagonal $< 10^{-10}$)
+  \item[$\square$] \texttt{solve\_via\_qr} matches \texttt{np.linalg.lstsq} for random systems
+  \item[$\square$] \texttt{back\_substitution} solves $I\mathbf{x} = \mathbf{b}$ exactly
+  \item[$\square$] Weighted QR with $W = I$ matches unweighted
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 6: SVD
+% ============================================================
+\chapter{Singular Value Decomposition}
+\label{ch:svd}
+
+\begin{center}
+\texttt{src/math/svd.py} --- 13 functions, all stubs
+\end{center}
+
+\section{The SVD Theorem}
+
+\begin{theorem}[Singular Value Decomposition]
+Any matrix $A \in \mathbb{R}^{m \times n}$ can be decomposed as:
+\[
+A = U \Sigma V^\top
+\]
+where $U \in \mathbb{R}^{m \times m}$ is orthogonal, $\Sigma \in \mathbb{R}^{m \times n}$ is diagonal with $\sigma_1 \geq \sigma_2 \geq \cdots \geq 0$, and $V \in \mathbb{R}^{n \times n}$ is orthogonal.
+\end{theorem}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=0.5, font=\small]
+  % A
+  \fill[mathblue!20] (0,0) rectangle (3,5);
+  \draw[thick] (0,0) rectangle (3,5);
+  \node at (1.5, 5.5) {$A$};
+  \node at (1.5, -0.6) {\tiny $m \times n$};
+
+  \node[font=\large] at (4, 2.5) {$=$};
+
+  % U
+  \fill[modelred!20] (5,0) rectangle (10,5);
+  \draw[thick] (5,0) rectangle (10,5);
+  \node at (7.5, 5.5) {$U$};
+  \node at (7.5, -0.6) {\tiny $m \times m$};
+
+  % Sigma
+  \fill[utilgreen!20] (11,0) rectangle (14,5);
+  \draw[thick] (11,0) rectangle (14,5);
+  \node at (12.5, 5.5) {$\Sigma$};
+  \node at (12.5, -0.6) {\tiny $m \times n$};
+  % Diagonal entries
+  \foreach \i/\s in {0/$\sigma_1$, 1/$\sigma_2$, 2/$\sigma_3$} {
+    \fill[utilgreen!50] (11+\i, 4-\i) rectangle (12+\i, 5-\i);
+    \node[font=\tiny] at (11.5+\i, 4.5-\i) {\s};
+  }
+
+  % V^T
+  \fill[evalpurple!20] (15,2) rectangle (18,5);
+  \draw[thick] (15,2) rectangle (18,5);
+  \node at (16.5, 5.5) {$V^\top$};
+  \node at (16.5, 1.5) {\tiny $n \times n$};
+\end{tikzpicture}
+\caption{SVD factorization: $A = U\Sigma V^\top$. Singular values $\sigma_i$ are non-negative and sorted in decreasing order.}
+\label{fig:svd}
+\end{figure}
+
+\section{Geometric Interpretation}
+
+SVD decomposes any linear transformation into three steps:
+\[
+\mathbf{x} \xrightarrow{V^\top} \text{rotate} \xrightarrow{\Sigma} \text{stretch} \xrightarrow{U} \text{rotate}
+\]
+The unit sphere maps to an ellipsoid whose semi-axes have lengths $\sigma_1, \sigma_2, \ldots$.
+
+\section{Low-Rank Approximation}
+
+\begin{theorem}[Eckart--Young]
+The best rank-$k$ approximation to $A$ (in Frobenius norm) is:
+\[
+A_k = \sum_{i=1}^{k} \sigma_i \mathbf{u}_i \mathbf{v}_i^\top
+\]
+The approximation error is $\|A - A_k\|_F = \sqrt{\sigma_{k+1}^2 + \cdots + \sigma_r^2}$.
+\end{theorem}
+
+The \textbf{explained variance ratio} for each component:
+\[
+\text{EVR}_i = \frac{\sigma_i^2}{\sum_{j=1}^{r} \sigma_j^2}
+\]
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=10cm, height=6cm,
+  ybar, bar width=12pt,
+  xlabel={Component $i$}, ylabel={Singular value $\sigma_i$},
+  xtick={1,...,8}, ymin=0,
+  axis y line=left, axis x line=bottom,
+  title={Scree Plot with Cumulative Explained Variance},
+]
+  \addplot[fill=mathblue!40, draw=mathblue] coordinates {
+    (1,10) (2,6) (3,3) (4,1.5) (5,0.8) (6,0.4) (7,0.2) (8,0.1)
+  };
+\end{axis}
+\begin{axis}[
+  width=10cm, height=6cm,
+  axis y line=right, axis x line=none,
+  ylabel={Cumulative EVR (\%)},
+  xtick=\empty, ymin=0, ymax=110,
+  ylabel style={modelred},
+  tick label style={modelred},
+]
+  \addplot[thick, modelred, mark=*] coordinates {
+    (1,63.3) (2,86.1) (3,91.8) (4,93.2) (5,93.6) (6,93.7) (7,93.7) (8,93.7)
+  };
+  \draw[dashed, gray] (axis cs:0,95) -- (axis cs:9,95);
+  \node[gray, font=\small] at (axis cs:7.5, 97) {95\% threshold};
+\end{axis}
+\end{tikzpicture}
+\caption{Scree plot. Choose rank $k$ where cumulative explained variance reaches the desired threshold (e.g., 95\%).}
+\label{fig:screeplot}
+\end{figure}
+
+\section{Ridge via SVD}
+
+The ridge regression solution using SVD is more numerically stable than the normal equations:
+\[
+\hat{\boldsymbol{\beta}}_{\text{ridge}} = V \operatorname{diag}\!\left(\frac{\sigma_i}{\sigma_i^2 + \lambda}\right) U^\top \mathbf{y}
+\]
+
+The \textbf{shrinkage factor} for each component is $d_i = \sigma_i^2 / (\sigma_i^2 + \lambda)$, which preferentially shrinks directions with small singular values.
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{SVD components $U, \mathbf{s}, V^\top$ of $X$; target $\mathbf{y}$; regularization $\lambda$}
+\KwOut{$\hat{\boldsymbol{\beta}}_{\text{ridge}}$}
+$\mathbf{d} \gets \mathbf{s}^2 / (\mathbf{s}^2 + \lambda)$ \tcp*{shrinkage factors}
+$\mathbf{z} \gets U^\top \mathbf{y}$ \tcp*{project}
+$\mathbf{z} \gets \mathbf{z} \odot \mathbf{d} \,/\, \mathbf{s}$ \tcp*{shrink and scale}
+$\hat{\boldsymbol{\beta}} \gets V^\top{}^\top \mathbf{z}$ \tcp*{rotate back}
+\Return{$\hat{\boldsymbol{\beta}}$}\;
+\caption{\texttt{ridge\_via\_svd(U, s, Vt, y, lam)}}
+\end{algorithm}
+
+The \textbf{effective degrees of freedom}:
+\[
+\text{df}(\lambda) = \sum_{i=1}^{n} \frac{\sigma_i^2}{\sigma_i^2 + \lambda} \in [0, n]
+\]
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item \texttt{compute\_svd(A)}: Use \texttt{np.linalg.svd(A, full\_matrices=False)} for the reduced form.
+  \item \texttt{ridge\_via\_svd} is more stable than normal equations when $X$ is ill-conditioned.
+  \item \texttt{explained\_variance\_ratio}: \texttt{s**2 / np.sum(s**2)}.
+  \item \texttt{choose\_rank}: Find smallest $k$ where $\sum_{i=1}^k \text{EVR}_i \geq \text{threshold}$.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] $\|U\Sigma V^\top - A\| < 10^{-10}$ (reconstruction)
+  \item[$\square$] \texttt{matrix\_rank(identity(5)) == 5}
+  \item[$\square$] Low-rank error decreases as $k$ increases
+  \item[$\square$] \texttt{ridge\_via\_svd} matches \texttt{ridge\_solve} for same $\lambda$
+  \item[$\square$] $\text{df}(0) = n$ and $\text{df}(\lambda) \to 0$ as $\lambda \to \infty$
+  \item[$\square$] \texttt{choose\_rank} at threshold 1.0 returns full rank
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 7: RIDGE REGRESSION
+% ============================================================
+\chapter{Ridge Regression}
+\label{ch:ridge}
+
+\begin{center}
+\texttt{src/math/ridge.py} --- 9 functions, all stubs
+\end{center}
+
+\section{Bias--Variance Tradeoff}
+
+OLS is \emph{unbiased} but can have \emph{high variance} when features are correlated. Ridge regression introduces controlled bias to reduce variance.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=10cm, height=6cm,
+  xlabel={$\log(\lambda)$},
+  ylabel={Error},
+  xmin=-4, xmax=4,
+  ymin=0, ymax=5,
+  legend pos=north east,
+  axis lines=left,
+  domain=-4:4, samples=100,
+]
+  % Bias squared
+  \addplot[thick, mathblue] {0.5 + 1.5*(1/(1+exp(-1.5*(x-0.5))))};
+  \addlegendentry{Bias$^2$}
+
+  % Variance
+  \addplot[thick, modelred] {3.5*exp(-0.8*(x+1))};
+  \addlegendentry{Variance}
+
+  % Total MSE
+  \addplot[thick, evalpurple, dashed] {0.5 + 1.5*(1/(1+exp(-1.5*(x-0.5)))) + 3.5*exp(-0.8*(x+1))};
+  \addlegendentry{Total MSE}
+
+  % Optimal lambda
+  \draw[dashed, gray, thick] (axis cs:0.3, 0) -- (axis cs:0.3, 4);
+  \node[font=\small, gray] at (axis cs:0.3, 4.3) {$\lambda^*$};
+\end{axis}
+\end{tikzpicture}
+\caption{Bias--variance tradeoff. The optimal $\lambda^*$ minimizes total MSE.}
+\label{fig:biasvariance}
+\end{figure}
+
+\section{Ridge Solution}
+
+Minimize the penalized objective:
+\[
+\|\mathbf{y} - X\boldsymbol{\beta}\|^2 + \lambda \|\boldsymbol{\beta}\|^2
+\]
+
+Differentiating and setting to zero:
+\begin{align}
+-2X^\top(\mathbf{y} - X\boldsymbol{\beta}) + 2\lambda\boldsymbol{\beta} &= \mathbf{0} \\
+(X^\top X + \lambda I)\boldsymbol{\beta} &= X^\top \mathbf{y}
+\end{align}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{$X \in \mathbb{R}^{m \times n}$, $\mathbf{y} \in \mathbb{R}^m$, $\lambda > 0$}
+\KwOut{$\hat{\boldsymbol{\beta}}_{\text{ridge}}$}
+$G \gets X^\top X$ \tcp*{Gram matrix}
+$G_{\text{reg}} \gets G + \lambda I_n$ \tcp*{add\_ridge}
+$\mathbf{b} \gets X^\top \mathbf{y}$\;
+$\hat{\boldsymbol{\beta}} \gets \texttt{solve}(G_{\text{reg}}, \mathbf{b})$\;
+\Return{$\hat{\boldsymbol{\beta}}$}\;
+\caption{\texttt{ridge\_solve(X, y, lam)}}
+\end{algorithm}
+
+\section{The Augmented QR Trick}
+
+\begin{keyconcept}
+Stack $\sqrt{\lambda}\, I_n$ below $X$ and $\mathbf{0}_n$ below $\mathbf{y}$, then apply standard QR:
+\[
+\underbrace{\begin{pmatrix} X \\ \sqrt{\lambda}\, I_n \end{pmatrix}}_{X_{\text{aug}}} \boldsymbol{\beta} = \underbrace{\begin{pmatrix} \mathbf{y} \\ \mathbf{0}_n \end{pmatrix}}_{\mathbf{y}_{\text{aug}}}
+\]
+This is mathematically equivalent to ridge but uses the stable QR solver from Chapter~\ref{ch:qr}.
+\end{keyconcept}
+
+\section{Selecting $\lambda$}
+
+\subsection{Leave-One-Out Cross-Validation (LOOCV)}
+
+The LOOCV shortcut avoids refitting $n$ times:
+\[
+\text{CV}(\lambda) = \frac{1}{n}\sum_{i=1}^{n} \left(\frac{y_i - \hat{y}_i}{1 - h_{ii}}\right)^2
+\]
+where $h_{ii}$ are the diagonal entries of the ridged hat matrix $H_\lambda = X(X^\top X + \lambda I)^{-1}X^\top$.
+
+\subsection{Generalized Cross-Validation (GCV)}
+
+Approximation of LOOCV:
+\[
+\text{GCV}(\lambda) = \frac{\frac{1}{n}\|\mathbf{y} - H_\lambda \mathbf{y}\|^2}{\left(1 - \frac{\text{df}(\lambda)}{n}\right)^2}
+\]
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=10cm, height=5cm,
+  xlabel={$\lambda$}, ylabel={Coefficient value},
+  xmode=log, xmin=0.01, xmax=1000,
+  legend pos=outer north east,
+  axis lines=left,
+  title={Ridge Path (Coefficient Traces)},
+]
+  \addplot[thick, mathblue, domain=0.01:1000, samples=80] {3/(1+0.1*x)};
+  \addlegendentry{$\beta_1$ (GPA)}
+  \addplot[thick, modelred, domain=0.01:1000, samples=80] {-1.5/(1+0.05*x)};
+  \addlegendentry{$\beta_2$ (Uni)}
+  \addplot[thick, utilgreen, domain=0.01:1000, samples=80] {0.8/(1+0.2*x)};
+  \addlegendentry{$\beta_3$ (Term)}
+  \addplot[thick, evalpurple, domain=0.01:1000, samples=80] {-0.5/(1+0.08*x)};
+  \addlegendentry{$\beta_4$ (Type)}
+  \draw[dashed, gray, thick] (axis cs:10, -2) -- (axis cs:10, 4);
+  \node[font=\small, gray] at (axis cs:10, 3.8) {$\lambda^*$};
+\end{axis}
+\end{tikzpicture}
+\caption{Ridge path: all coefficients shrink toward zero as $\lambda$ increases.}
+\label{fig:ridgepath}
+\end{figure}
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item \texttt{ridge\_solve}: \texttt{np.linalg.solve(X.T @ X + lam * np.eye(n), X.T @ y)}.
+  \item \texttt{ridge\_solve\_qr}: Augment $X$ and $\mathbf{y}$, then call \texttt{solve\_via\_qr}.
+  \item \texttt{weighted\_ridge\_solve(X, y, W, lam)}: Transform $\tilde{X} = W^{1/2}X$, $\tilde{\mathbf{y}} = W^{1/2}\mathbf{y}$, then \texttt{ridge\_solve}.
+  \item \texttt{ridge\_path}: Loop over $\lambda$ values, or use SVD once and apply different shrinkage factors.
+  \item \texttt{standardize\_features}: $\bar{X}_j = (X_j - \mu_j) / \sigma_j$. Return means and stds.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] $\lambda = 0$: ridge matches OLS (within tolerance)
+  \item[$\square$] Large $\lambda$: coefficients near zero
+  \item[$\square$] \texttt{ridge\_solve\_qr} matches \texttt{ridge\_solve}
+  \item[$\square$] LOOCV matches brute-force LOO for small datasets
+  \item[$\square$] GCV minimum near LOOCV minimum
+  \item[$\square$] \texttt{standardize\_features}: mean $\approx 0$, std $\approx 1$
+  \item[$\square$] \texttt{weighted\_ridge\_solve} with $W = I$ matches unweighted
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 8: DATA NORMALIZATION
+% ============================================================
+\chapter{Data Normalization}
+\label{ch:normalize}
+
+\begin{center}
+\texttt{src/utils/normalize.py} --- $\sim$20 functions, all stubs
+\end{center}
+
+\section{The Data Quality Problem}
+
+Raw data contains inconsistent naming: ``UofT'', ``University of Toronto'', ``U of T'', ``Uoft Scarborough''. The normalization layer maps these to canonical forms using exact YAML lookup followed by RapidFuzz fuzzy matching.
+
+\section{University Normalization}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=0.6cm and 1.5cm,
+  box/.style={draw, rounded corners, minimum width=3cm, minimum height=0.8cm, thick, font=\small},
+  decision/.style={draw, diamond, aspect=2.5, thick, font=\small, inner sep=1pt},
+  arr/.style={-{Stealth}, thick}
+]
+  \node[box, fill=mathblue!15] (input) {Raw: ``U of T Scarb''};
+  \node[box, below=of input] (clean) {Cleaned: ``u of t scarb''};
+  \node[decision, below=of clean] (exact) {Exact YAML\\match?};
+  \node[box, right=2cm of exact, fill=utilgreen!20] (found) {Return canonical};
+  \node[decision, below=1cm of exact] (fuzzy) {Fuzzy score\\$\geq 85$?};
+  \node[box, right=2cm of fuzzy, fill=utilgreen!20] (fmatch) {Return best match};
+  \node[box, below=1cm of fuzzy, fill=modelred!20] (invalid) {Return \texttt{None}};
+
+  \draw[arr] (input) -- (clean);
+  \draw[arr] (clean) -- (exact);
+  \draw[arr] (exact) -- node[above, font=\small] {Yes} (found);
+  \draw[arr] (exact) -- node[left, font=\small] {No} (fuzzy);
+  \draw[arr] (fuzzy) -- node[above, font=\small] {Yes} (fmatch);
+  \draw[arr] (fuzzy) -- node[left, font=\small] {No} (invalid);
+\end{tikzpicture}
+\caption{University normalization pipeline: exact lookup, then fuzzy matching, then rejection.}
+\label{fig:normpipeline}
+\end{figure}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{Raw university name string}
+\KwOut{Canonical name or \texttt{None}}
+$\text{cleaned} \gets \text{strip\_and\_lowercase}(\text{raw\_name})$\;
+\If{$\text{cleaned} \in \text{yaml\_mapping}$}{
+  \Return{$\text{yaml\_mapping}[\text{cleaned}]$}\;
+}
+$\text{best\_score}, \text{best\_match} \gets 0, \text{None}$\;
+\ForEach{canonical $\in$ all\_known\_universities}{
+  $\text{score} \gets \texttt{RapidFuzz.WRatio}(\text{cleaned}, \text{canonical})$\;
+  \If{$\text{score} > \text{best\_score}$}{
+    $\text{best\_score}, \text{best\_match} \gets \text{score}, \text{canonical}$\;
+  }
+}
+\lIf{$\text{best\_score} \geq 85$}{\Return{best\_match}}
+\lElse{\Return{\texttt{None}}}
+\caption{\texttt{UniversityNormalizer.normalize(raw\_name)}}
+\end{algorithm}
+
+\section{Program Normalization}
+
+Programs are decomposed into structured components using regex:
+
+\begin{center}
+\texttt{``BSc Honours Computer Science Co-op''} \\[4pt]
+$\downarrow$ \\[4pt]
+\texttt{ProgramComponents(base=``Computer Science'', degree=``BSc'', honours=True, coop=True)}
+\end{center}
+
+The \texttt{ProgramNormalizer} uses 16 degree patterns (BSc, BA, BEng, BASc, etc.) and fuzzy matching for the base program name with threshold 80.
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item YAML loading: \texttt{yaml.safe\_load(open(path))}. Build a reverse lookup dict.
+  \item RapidFuzz: \texttt{from rapidfuzz import fuzz; fuzz.WRatio(s1, s2)} returns 0--100.
+  \item Use \texttt{token\_set\_ratio} for programs (word-order invariant).
+  \item Special case: ``Ryerson'' $\to$ ``Toronto Metropolitan University'' (renamed 2022).
+  \item UofT campuses: St.~George, Mississauga, Scarborough are separate entries.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] Exact match: ``University of Toronto'' $\to$ canonical
+  \item[$\square$] Fuzzy match: ``U of T'' $\to$ ``University of Toronto'' (score $\geq 85$)
+  \item[$\square$] Below threshold: random string returns \texttt{None}
+  \item[$\square$] Program parsing: extract all 4 components from compound string
+  \item[$\square$] Case insensitivity: ``UNIVERSITY OF TORONTO'' matches
+  \item[$\square$] Stats tracking: exact, fuzzy, invalid counts correct
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 9: FEATURE ENGINEERING
+% ============================================================
+\chapter{Feature Engineering}
+\label{ch:encoders}
+
+\begin{center}
+\texttt{src/features/encoders.py} --- 10 classes, $\sim$73 stubs
+\end{center}
+
+\section{Encoder Architecture}
+
+All encoders inherit from \texttt{BaseEncoder} (ABC) with a consistent interface:
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  class/.style={draw, thick, minimum width=3.5cm, minimum height=0.8cm,
+    rounded corners=2pt, font=\small\ttfamily},
+  arr/.style={-{Stealth[open]}, thick}
+]
+  % ABC
+  \node[class, fill=infragray!15] (base) at (0, 4) {BaseEncoder (ABC)};
+  \node[font=\tiny\ttfamily, below=-0.1cm of base, text=infragray] {fit() | transform() | inverse\_transform()};
+
+  % Concrete encoders
+  \node[class, fill=mathblue!15] (gpa) at (-5, 2) {GPAEncoder};
+  \node[class, fill=mathblue!15] (uni) at (-1.7, 2) {UniversityEncoder};
+  \node[class, fill=mathblue!15] (prog) at (1.7, 2) {ProgramEncoder};
+  \node[class, fill=mathblue!15] (term) at (5, 2) {TermEncoder};
+  \node[class, fill=featorange!15] (date) at (-4, 0.5) {DateEncoder};
+  \node[class, fill=featorange!15] (freq) at (-1, 0.5) {FrequencyEncoder};
+  \node[class, fill=featorange!15] (woe) at (2, 0.5) {WOEEncoder};
+  \node[class, fill=featorange!15] (comp) at (5, 0.5) {CompositeEncoder};
+
+  % Arrows
+  \foreach \n in {gpa, uni, prog, term, date, freq, woe, comp} {
+    \draw[arr] (\n) -- (base);
+  }
+\end{tikzpicture}
+\caption{Encoder class hierarchy. All inherit from \texttt{BaseEncoder} with \texttt{fit/transform/inverse\_transform}.}
+\label{fig:encoders}
+\end{figure}
+
+\section{GPA Encoding}
+
+Normalize heterogeneous GPA scales to $[0, 1]$:
+\begin{align}
+\text{Percentage:} \quad &g_{\text{norm}} = g / 100 \\
+\text{4.0 scale:} \quad &g_{\text{norm}} = g / 4.0 \\
+\text{Letter:} \quad &g_{\text{norm}} = \text{lookup}[g] / 4.0
+\end{align}
+Auto-detection: if $\max(g) > 10$, assume percentage; if $\max(g) \leq 4.3$, assume 4.0 scale.
+
+\section{Target Encoding with Bayesian Smoothing}
+
+For \texttt{UniversityEncoder} with target encoding:
+\[
+\text{enc}(x) = \frac{n_x \cdot \bar{y}_x + m \cdot \bar{y}_{\text{global}}}{n_x + m}
+\]
+where $n_x$ = samples with category $x$, $\bar{y}_x$ = mean target for $x$, $m$ = smoothing parameter.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=1]
+  \draw[->, thick] (0,0) -- (10,0);
+  \node[below, font=\small] at (2,0) {$\bar{y}_{\text{global}} = 0.45$};
+  \node[below, font=\small] at (8,0) {$\bar{y}_x = 0.72$};
+
+  % Global mean
+  \fill[infragray] (2, 0.15) circle (4pt);
+  \draw[infragray, thick] (2, 0) -- (2, 0.3);
+
+  % Category mean
+  \fill[modelred] (8, 0.15) circle (4pt);
+  \draw[modelred, thick] (8, 0) -- (8, 0.3);
+
+  % Smoothed estimate
+  \fill[utilgreen] (5.5, 0.15) circle (5pt);
+  \draw[utilgreen, thick] (5.5, 0) -- (5.5, 0.3);
+  \node[above, utilgreen!70!black, font=\small\bfseries] at (5.5, 0.35) {Smoothed};
+
+  % Arrows
+  \draw[{Stealth}-, thick, infragray!50] (3, 0.15) -- (5.3, 0.15);
+  \draw[-{Stealth}, thick, modelred!50] (5.7, 0.15) -- (7.8, 0.15);
+
+  \node[font=\tiny, above] at (4, 0.3) {$m$ pulls toward global};
+  \node[font=\tiny, above] at (7, 0.3) {$n_x$ pulls toward data};
+\end{tikzpicture}
+\caption{Target encoding: smoothing $m$ pulls rare categories toward the global mean, preventing overfitting.}
+\label{fig:targetencoding}
+\end{figure}
+
+\section{Cyclical Encoding}
+
+For \texttt{TermEncoder} --- preserves circular distance (Fall $\leftrightarrow$ Summer):
+\[
+\text{sin\_val} = \sin\!\left(\frac{2\pi \cdot \text{idx}}{n}\right), \qquad
+\text{cos\_val} = \cos\!\left(\frac{2\pi \cdot \text{idx}}{n}\right)
+\]
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=1.5]
+  \draw[thick, ->] (-1.3,0) -- (1.3,0) node[right] {$\cos$};
+  \draw[thick, ->] (0,-1.3) -- (0,1.3) node[above] {$\sin$};
+  \draw[gray, thin] (0,0) circle (1);
+
+  % Terms
+  \fill[mathblue] (1,0) circle (3pt) node[right, font=\small\bfseries] {Fall};
+  \fill[modelred] (0,1) circle (3pt) node[above, font=\small\bfseries] {Winter};
+  \fill[utilgreen] (-1,0) circle (3pt) node[left, font=\small\bfseries] {Spring};
+  \fill[evalpurple] (0,-1) circle (3pt) node[below, font=\small\bfseries] {Summer};
+\end{tikzpicture}
+\caption{Cyclical encoding: terms are equidistant on the unit circle. Fall and Summer are adjacent.}
+\label{fig:cyclical}
+\end{figure}
+
+\section{Weight of Evidence (WOE)}
+
+\[
+\text{WOE}(x) = \ln\!\left(\frac{P(x \mid y{=}1)}{P(x \mid y{=}0)}\right)
+\]
+\textbf{Information Value} for feature selection:
+\[
+\text{IV} = \sum_x \bigl(P(x \mid y{=}1) - P(x \mid y{=}0)\bigr) \cdot \text{WOE}(x)
+\]
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item GPA auto-detect: check $\max(g)$ to infer scale type.
+  \item Target encoding smoothing $m \approx 10\text{--}100$ prevents overfitting on rare categories.
+  \item WOE needs Laplace smoothing to avoid $\ln(0)$: add small $\varepsilon$ to counts.
+  \item \texttt{CompositeEncoder}: store list of encoders, call each in sequence.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] GPA 3.5/4.0 $\to$ 0.875 on $[0,1]$
+  \item[$\square$] Target encoding with $m \to \infty$ equals global mean
+  \item[$\square$] Cyclical: $\sin^2 + \cos^2 = 1$ for all terms
+  \item[$\square$] WOE positive for high-admit categories, negative for low-admit
+  \item[$\square$] \texttt{CompositeEncoder} chains produce expected output shape
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 10: DESIGN MATRIX CONSTRUCTION
+% ============================================================
+\chapter{Design Matrix Construction}
+\label{ch:designmatrix}
+
+\begin{center}
+\texttt{src/features/design\_matrix.py} --- 7 classes, $\sim$58 stubs
+\end{center}
+
+\section{The Design Matrix}
+
+\begin{definition}[Design Matrix]
+The matrix $X \in \mathbb{R}^{n \times p}$ where row $i$ is the feature vector for observation $i$:
+\[
+X = \begin{pmatrix}
+1 & g_1 & d_{1,\text{UofT}} & d_{1,\text{CS}} & g_1 \cdot d_{1,\text{UofT}} & \cdots \\
+1 & g_2 & d_{2,\text{UofT}} & d_{2,\text{CS}} & g_2 \cdot d_{2,\text{UofT}} & \cdots \\
+\vdots & \vdots & \vdots & \vdots & \vdots & \ddots
+\end{pmatrix}
+\]
+\end{definition}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=0.45, font=\small]
+  % Column groups
+  \fill[infragray!15] (0,0) rectangle (1,5);  % intercept
+  \fill[mathblue!15] (1,0) rectangle (3,5);    % numeric
+  \fill[utilgreen!15] (3,0) rectangle (7,5);    % categorical
+  \fill[featorange!15] (7,0) rectangle (10,5);  % interaction
+
+  % Grid
+  \draw[step=1, gray!40, thin] (0,0) grid (10,5);
+  \draw[thick] (0,0) rectangle (10,5);
+
+  % Column headers
+  \node[rotate=45, anchor=west, font=\tiny] at (0.5, 5.2) {Intercept};
+  \node[rotate=45, anchor=west, font=\tiny, mathblue] at (1.5, 5.2) {GPA};
+  \node[rotate=45, anchor=west, font=\tiny, mathblue] at (2.5, 5.2) {sin(term)};
+  \node[rotate=45, anchor=west, font=\tiny, utilgreen] at (3.5, 5.2) {UofT};
+  \node[rotate=45, anchor=west, font=\tiny, utilgreen] at (4.5, 5.2) {McGill};
+  \node[rotate=45, anchor=west, font=\tiny, utilgreen] at (5.5, 5.2) {Waterloo};
+  \node[rotate=45, anchor=west, font=\tiny, utilgreen] at (6.5, 5.2) {CS};
+  \node[rotate=45, anchor=west, font=\tiny, featorange] at (7.5, 5.2) {GPA$\times$UofT};
+  \node[rotate=45, anchor=west, font=\tiny, featorange] at (8.5, 5.2) {GPA$\times$CS};
+  \node[rotate=45, anchor=west, font=\tiny, featorange] at (9.5, 5.2) {GPA$^2$};
+
+  % Brace labels
+  \draw[decorate, decoration={brace, amplitude=5pt, mirror}] (0, -0.3) -- (1, -0.3)
+    node[midway, below=5pt, font=\tiny] {bias};
+  \draw[decorate, decoration={brace, amplitude=5pt, mirror}] (1, -0.3) -- (3, -0.3)
+    node[midway, below=5pt, font=\tiny, mathblue] {numeric};
+  \draw[decorate, decoration={brace, amplitude=5pt, mirror}] (3, -0.3) -- (7, -0.3)
+    node[midway, below=5pt, font=\tiny, utilgreen] {categorical};
+  \draw[decorate, decoration={brace, amplitude=5pt, mirror}] (7, -0.3) -- (10, -0.3)
+    node[midway, below=5pt, font=\tiny, featorange] {interaction};
+\end{tikzpicture}
+\caption{Anatomy of a design matrix. Columns are grouped by type: intercept, numeric, categorical (dummy-encoded), and interaction terms.}
+\label{fig:designmatrix}
+\end{figure}
+
+\section{The Dummy Variable Trap}
+
+\begin{keyconcept}
+If a categorical with $k$ levels is one-hot encoded into $k$ columns, these columns plus the intercept are linearly dependent (sum to 1 in every row). This makes $X^\top X$ singular.
+
+\textbf{Solution:} Drop the first level (``drop-first'' or ``dummy encoding''), producing $k-1$ columns.
+\end{keyconcept}
+
+\section{Builder Pattern}
+
+The \texttt{DesignMatrixBuilder} uses method chaining:
+
+\begin{lstlisting}[caption={Builder pattern usage (conceptual).}]
+builder = DesignMatrixBuilder(config)
+X = (builder
+     .fit(training_data)
+     .transform(training_data))
+feature_names = builder.get_feature_names()
+\end{lstlisting}
+
+\section{Validation}
+
+\begin{itemize}[nosep]
+  \item \texttt{validate\_design\_matrix(X)}: check for NaN, Inf, constant columns
+  \item \texttt{check\_column\_rank(X)}: via SVD, is $X$ full column rank?
+  \item \texttt{identify\_collinear\_features(X, threshold)}: pairs with $|r| > \text{threshold}$
+\end{itemize}
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item \texttt{NumericScaler}: store \texttt{mean\_} and \texttt{std\_} during \texttt{fit}, apply during \texttt{transform}.
+  \item \texttt{DummyEncoder}: drop first category alphabetically by default.
+  \item \texttt{check\_column\_rank}: compute SVD, count singular values above tolerance.
+  \item Builder's \texttt{.fit()} returns \texttt{self} for method chaining.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] \texttt{NumericScaler}: output has mean $\approx 0$, std $\approx 1$
+  \item[$\square$] \texttt{DummyEncoder}: $k$ categories $\to$ $k{-}1$ columns
+  \item[$\square$] \texttt{validate\_design\_matrix} catches NaN and constant columns
+  \item[$\square$] \texttt{check\_column\_rank} returns True for well-constructed $X$
+  \item[$\square$] Builder method chaining works: each method returns \texttt{self}
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 11: BASELINE MODEL (BETA-BINOMIAL)
+% ============================================================
+\chapter{Baseline Model: Beta-Binomial}
+\label{ch:baseline}
+
+\begin{center}
+\texttt{src/models/baseline.py} --- partially implemented
+\end{center}
+
+\section{Bayesian Motivation}
+
+For rare programs with few observations, maximum likelihood estimates are unreliable. Bayesian inference provides principled uncertainty quantification via \textbf{conjugate priors}.
+
+\begin{definition}[Beta Distribution]
+$\text{Beta}(\alpha, \beta)$ has density:
+\[
+f(p; \alpha, \beta) = \frac{p^{\alpha-1}(1-p)^{\beta-1}}{B(\alpha, \beta)}, \quad p \in [0,1]
+\]
+with mean $\mu = \alpha / (\alpha + \beta)$.
+\end{definition}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=10cm, height=6cm,
+  xlabel={$p$ (admission probability)}, ylabel={Density},
+  xmin=0, xmax=1, ymin=0, ymax=4,
+  legend pos=north east, axis lines=left,
+  domain=0.01:0.99, samples=100,
+]
+  % Beta(1,1) = Uniform
+  \addplot[thick, infragray] {1};
+  \addlegendentry{Beta(1,1) --- Uniform}
+
+  % Beta(2,5) - low rate
+  \addplot[thick, mathblue] {(x^1)*(1-x)^4 / 0.0333};
+  \addlegendentry{Beta(2,5) --- Low rate}
+
+  % Beta(10,3) - high rate
+  \addplot[thick, modelred] {(x^9)*(1-x)^2 / 0.00165};
+  \addlegendentry{Beta(10,3) --- High rate}
+
+  % Beta(30,30) - tight
+  \addplot[thick, utilgreen] {(x^29)*(1-x)^29 / 1.25e-19};
+  \addlegendentry{Beta(30,30) --- Tight}
+\end{axis}
+\end{tikzpicture}
+\caption{Beta distribution family. Shape parameters $\alpha, \beta$ control the prior belief about admission rates.}
+\label{fig:betafamily}
+\end{figure}
+
+\section{Bayesian Update}
+
+\begin{theorem}[Conjugate Update]
+Prior $\text{Beta}(\alpha_0, \beta_0)$ + observe $k$ admits in $n$ trials $\implies$ Posterior $\text{Beta}(\alpha_0 + k, \, \beta_0 + n - k)$.
+\end{theorem}
+
+Posterior mean:
+\[
+\hat{p} = \frac{\alpha_0 + k}{\alpha_0 + \beta_0 + n}
+\]
+
+This is a \textbf{weighted average} of the prior mean and the observed rate:
+\[
+\hat{p} = \underbrace{\frac{\alpha_0 + \beta_0}{\alpha_0 + \beta_0 + n}}_{\text{prior weight}} \cdot \underbrace{\frac{\alpha_0}{\alpha_0 + \beta_0}}_{\text{prior mean}} + \underbrace{\frac{n}{\alpha_0 + \beta_0 + n}}_{\text{data weight}} \cdot \underbrace{\frac{k}{n}}_{\text{observed rate}}
+\]
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=10cm, height=5cm,
+  xlabel={$p$}, ylabel={Density},
+  xmin=0, xmax=1, ymin=0, ymax=5,
+  legend pos=north west, axis lines=left,
+  domain=0.01:0.99, samples=100,
+]
+  % Prior Beta(2,5)
+  \addplot[thick, mathblue, dashed] {(x^1)*(1-x)^4 / 0.0333};
+  \addlegendentry{Prior: Beta(2,5)}
+
+  % Posterior Beta(10,7) after 8/10
+  \addplot[thick, modelred, very thick] {(x^9)*(1-x)^6 / 0.000166};
+  \addlegendentry{Posterior: Beta(10,7)}
+
+  % Annotation
+  \draw[-{Stealth}, thick, gray] (axis cs:0.32, 3.5) -- (axis cs:0.55, 4)
+    node[right, font=\small] {8 admits in 10};
+\end{axis}
+\end{tikzpicture}
+\caption{Bayesian update: prior Beta(2,5) updated with 8 admits out of 10 applications yields posterior Beta(10,7). The distribution shifts right and tightens.}
+\label{fig:bayesupdate}
+\end{figure}
+
+\section{Hierarchical Structure}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=1cm and 1.5cm,
+  level/.style={font=\small, draw, rounded corners, thick, minimum width=2.5cm, minimum height=0.6cm},
+  arr/.style={-{Stealth}, thick, gray}
+]
+  \node[level, fill=infragray!15] (global) {Global Prior $\text{Beta}(\alpha_0, \beta_0)$};
+
+  \node[level, fill=mathblue!15, below left=1cm and 0.5cm of global] (uoft) {UofT Prior};
+  \node[level, fill=mathblue!15, below=1cm of global] (uw) {Waterloo Prior};
+  \node[level, fill=mathblue!15, below right=1cm and 0.5cm of global] (mcg) {McGill Prior};
+
+  \node[level, fill=modelred!15, below left=0.8cm and -0.3cm of uoft, font=\tiny] (ucs) {UofT CS};
+  \node[level, fill=modelred!15, below right=0.8cm and -0.3cm of uoft, font=\tiny] (ueng) {UofT Eng};
+  \node[level, fill=modelred!15, below=0.8cm of uw, font=\tiny] (wcs) {Waterloo CS};
+
+  \draw[arr] (global) -- (uoft);
+  \draw[arr] (global) -- (uw);
+  \draw[arr] (global) -- (mcg);
+  \draw[arr] (uoft) -- (ucs);
+  \draw[arr] (uoft) -- (ueng);
+  \draw[arr] (uw) -- (wcs);
+\end{tikzpicture}
+\caption{Hierarchical prior: rare programs borrow strength from university-level and global estimates.}
+\label{fig:hierarchy}
+\end{figure}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{Training data with university, program, outcome}
+\KwOut{Fitted posteriors for each (university, program) pair}
+$\alpha_0, \beta_0 \gets$ compute global prior from data\;
+\ForEach{university $u$ in data}{
+  $k_u, n_u \gets$ count admits and total for $u$\;
+  $\text{uni\_post} \gets \text{Beta}(\alpha_0 + k_u, \, \beta_0 + n_u - k_u)$\;
+  \ForEach{program $p$ in university $u$}{
+    $k_{up}, n_{up} \gets$ count admits and total for $(u, p)$\;
+    $\text{prog\_post} \gets \text{Beta}(\text{uni\_post}.\alpha + k_{up}, \, \text{uni\_post}.\beta + n_{up} - k_{up})$\;
+    store posterior for $(u, p)$\;
+  }
+}
+\caption{\texttt{BaselineModel.fit(data)}}
+\end{algorithm}
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item \texttt{BetaPrior}: store $\alpha, \beta$ as floats. Mean = $\alpha / (\alpha + \beta)$.
+  \item For confidence intervals: \texttt{scipy.stats.beta.ppf([0.025, 0.975], alpha, beta)}.
+  \item Hierarchical fallback: try (uni, prog), then (uni, *), then global.
+  \item \texttt{BaseModel} ABC enforces: \texttt{fit()}, \texttt{predict\_proba()}, \texttt{predict()}, \texttt{evaluate()}.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] Uniform prior + 0 obs: $\hat{p} = 0.5$
+  \item[$\square$] Beta(1,1) + 10/10 admits: $\hat{p} = 11/12$
+  \item[$\square$] Rare program falls back to university-level estimate
+  \item[$\square$] \texttt{save()} and \texttt{load()} round-trip gives identical predictions
+  \item[$\square$] Posterior variance decreases with more data
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 12: LOGISTIC REGRESSION VIA IRLS (CORE)
+% ============================================================
+\chapter{Logistic Regression via IRLS}
+\label{ch:irls}
+
+\begin{center}
+\texttt{src/models/logistic.py} --- $\sim$10 stubs \\[4pt]
+\fbox{\textbf{This is the central algorithm of the project.}}
+\end{center}
+
+\section{Logistic Regression Setup}
+
+\begin{definition}[Logistic Model]
+\[
+P(y = 1 \mid \mathbf{x}) = \sigma(\mathbf{x}^\top \boldsymbol{\beta}) = \frac{1}{1 + e^{-\mathbf{x}^\top \boldsymbol{\beta}}}
+\]
+\end{definition}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=10cm, height=5cm,
+  xlabel={$z = \mathbf{x}^\top\boldsymbol{\beta}$},
+  ylabel={$\sigma(z)$},
+  xmin=-6, xmax=6, ymin=-0.1, ymax=1.1,
+  axis lines=middle,
+  ytick={0, 0.5, 1},
+  domain=-6:6, samples=100,
+]
+  \addplot[very thick, modelred] {1/(1+exp(-x))};
+
+  % Annotations
+  \draw[dashed, gray] (axis cs:-6, 0.5) -- (axis cs:0, 0.5) -- (axis cs:0, 0);
+  \node[font=\small] at (axis cs:0.8, 0.5) {$\frac{1}{2}$};
+  \node[font=\small, modelred] at (axis cs:4.5, 0.85) {$\sigma(z) = \frac{1}{1+e^{-z}}$};
+\end{axis}
+\end{tikzpicture}
+\caption{The sigmoid function maps any real number to $(0, 1)$.}
+\label{fig:sigmoid}
+\end{figure}
+
+\textbf{Numerically stable implementation:}
+\[
+\sigma(z) = \begin{cases}
+\dfrac{1}{1 + e^{-z}} & \text{if } z \geq 0 \\[6pt]
+\dfrac{e^z}{1 + e^z} & \text{if } z < 0
+\end{cases}
+\]
+
+\section{Log-Loss (Negative Log-Likelihood)}
+
+\[
+\mathcal{L}(\boldsymbol{\beta}) = -\sum_{i=1}^{n} \bigl[ y_i \ln p_i + (1 - y_i) \ln(1 - p_i) \bigr]
+\]
+where $p_i = \sigma(\mathbf{x}_i^\top \boldsymbol{\beta})$.
+
+\section{Newton's Method $\to$ IRLS}
+
+\textbf{Gradient:}
+\[
+\nabla \mathcal{L} = X^\top(\mathbf{p} - \mathbf{y})
+\]
+
+\textbf{Hessian:}
+\[
+\nabla^2 \mathcal{L} = X^\top W X, \quad W = \operatorname{diag}(p_i(1 - p_i))
+\]
+
+\textbf{Newton step:}
+\[
+\boldsymbol{\beta}_{\text{new}} = \boldsymbol{\beta} - (X^\top W X)^{-1} X^\top(\mathbf{p} - \mathbf{y})
+\]
+
+Rewriting as \textbf{weighted least squares}:
+\begin{align}
+(X^\top W X)\boldsymbol{\beta}_{\text{new}} &= X^\top W \mathbf{z} \\
+\text{where} \quad \mathbf{z} &= X\boldsymbol{\beta} + W^{-1}(\mathbf{y} - \mathbf{p}) \quad \text{(working response)}
+\end{align}
+
+\begin{keyconcept}
+Each IRLS iteration solves a \textbf{weighted ridge regression} problem (Chapter~\ref{ch:ridge}):
+\[
+(X^\top W X + \lambda I)\boldsymbol{\beta}_{\text{new}} = X^\top W \mathbf{z}
+\]
+This connects \emph{all} the math chapters: dot products (Ch.~\ref{ch:vectors}), matrices (Ch.~\ref{ch:matrices}), QR (Ch.~\ref{ch:qr}), and ridge (Ch.~\ref{ch:ridge}).
+\end{keyconcept}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=0.5cm and 1.2cm,
+  step/.style={draw, rounded corners, thick, minimum width=2.8cm, minimum height=0.7cm, font=\small},
+  arr/.style={-{Stealth}, thick}
+]
+  \node[step, fill=mathblue!15] (init) {$\boldsymbol{\beta}_0 = \mathbf{0}$};
+  \node[step, fill=modelred!15, right=of init] (pred) {$\mathbf{p} = \sigma(X\boldsymbol{\beta})$};
+  \node[step, fill=featorange!15, right=of pred] (wt) {$W = \text{diag}(p_i(1{-}p_i))$};
+  \node[step, fill=utilgreen!15, below=0.8cm of wt] (work) {$\mathbf{z} = X\boldsymbol{\beta} + W^{-1}(\mathbf{y}{-}\mathbf{p})$};
+  \node[step, fill=evalpurple!15, left=of work] (solve) {Solve WLS};
+  \node[step, fill=mathblue!15, left=of solve] (update) {$\boldsymbol{\beta}_{\text{new}}$};
+
+  \draw[arr] (init) -- (pred);
+  \draw[arr] (pred) -- (wt);
+  \draw[arr] (wt) -- (work);
+  \draw[arr] (work) -- (solve);
+  \draw[arr] (solve) -- (update);
+
+  % Loop back
+  \draw[arr, dashed, gray] (update.south) -- ++(0, -0.5) -| node[below, font=\small\itshape, pos=0.25] {until convergence} (pred.south);
+
+  % Math module callouts
+  \node[font=\tiny, mathblue!70!black, above=0.05cm of solve] {calls \texttt{weighted\_ridge\_solve}};
+\end{tikzpicture}
+\caption{IRLS inner loop: predict $\to$ compute weights $\to$ working response $\to$ solve weighted LS $\to$ update. Repeat until convergence.}
+\label{fig:irlsloop}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  mod/.style={draw, rounded corners, thick, font=\small\ttfamily, minimum width=2.5cm, minimum height=0.6cm},
+  arr/.style={-{Stealth}, thick}
+]
+  \node[mod, fill=modelred!15] (irls) at (0,0) {logistic.py};
+  \node[mod, fill=mathblue!15] (vec) at (-4, -1.5) {vectors.py};
+  \node[mod, fill=mathblue!15] (mat) at (-1.3, -1.5) {matrices.py};
+  \node[mod, fill=mathblue!15] (ridge) at (1.3, -1.5) {ridge.py};
+  \node[mod, fill=mathblue!15] (qr) at (4, -1.5) {qr.py};
+
+  \draw[arr, mathblue] (irls) -- node[left, font=\tiny] {dot()} (vec);
+  \draw[arr, mathblue] (irls) -- node[left, font=\tiny] {gram\_matrix()} (mat);
+  \draw[arr, mathblue] (irls) -- node[right, font=\tiny] {weighted\_ridge\_solve()} (ridge);
+  \draw[arr, mathblue] (irls) -- node[right, font=\tiny] {solve\_weighted\_via\_qr()} (qr);
+\end{tikzpicture}
+\caption{IRLS integrates all math modules. This is why the math chapters must be implemented first.}
+\label{fig:irlsintegration}
+\end{figure}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{$X \in \mathbb{R}^{n \times p}$, $\mathbf{y} \in \{0,1\}^n$, $\lambda \geq 0$, max\_iter, tol}
+\KwOut{$\hat{\boldsymbol{\beta}}$, training history}
+$\boldsymbol{\beta} \gets \mathbf{0}_p$; \quad $\text{history} \gets [\,]$\;
+\For{$\text{iter} \gets 1$ \KwTo max\_iter}{
+  $\boldsymbol{\eta} \gets X\boldsymbol{\beta}$ \tcp*{linear predictor}
+  $\mathbf{p} \gets \sigma(\boldsymbol{\eta})$ \tcp*{predictions}
+  $\mathbf{w} \gets \text{clip}(\mathbf{p} \odot (1 - \mathbf{p}), \; \varepsilon, \; 0.25)$ \tcp*{weights}
+  $\mathbf{z} \gets \boldsymbol{\eta} + (\mathbf{y} - \mathbf{p}) \,/\, \mathbf{w}$ \tcp*{working response}
+  $\boldsymbol{\beta}_{\text{new}} \gets \texttt{weighted\_ridge\_solve}(X, \mathbf{z}, \text{diag}(\mathbf{w}), \lambda)$\;
+  $\ell \gets \texttt{log\_loss}(X, \mathbf{y}, \boldsymbol{\beta}_{\text{new}})$\;
+  history.append($\ell$)\;
+  \If{$\|\boldsymbol{\beta}_{\text{new}} - \boldsymbol{\beta}\| < \text{tol}$}{
+    \textbf{break} \tcp*{converged}
+  }
+  $\boldsymbol{\beta} \gets \boldsymbol{\beta}_{\text{new}}$\;
+}
+\Return{$\boldsymbol{\beta}$, history}\;
+\caption{\texttt{LogisticModel.fit(X, y)} --- IRLS with ridge regularization}
+\label{alg:irls}
+\end{algorithm}
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item \textbf{Sigmoid stability}: For $z < 0$, use $e^z/(1+e^z)$ to avoid overflow.
+  \item \textbf{Clip weights}: $w_i = \text{clip}(p_i(1-p_i), \; 10^{-10}, \; 0.25)$ to avoid division by zero.
+  \item \textbf{Working response}: Can have extreme values when $p \approx 0$ or $p \approx 1$; clipping prevents instability.
+  \item \textbf{Integration point}: \texttt{irls\_step} calls \texttt{weighted\_ridge\_solve} from \texttt{ridge.py}.
+  \item \textbf{Non-convergence}: If loss increases, increase $\lambda$ or reduce step size.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] $\sigma(0) = 0.5$
+  \item[$\square$] $\sigma(\text{large positive}) \approx 1.0$ without overflow
+  \item[$\square$] $\sigma(\text{large negative}) \approx 0.0$ without underflow
+  \item[$\square$] Log-loss is non-negative
+  \item[$\square$] IRLS converges on linearly separable toy data in $< 20$ iterations
+  \item[$\square$] IRLS with $\lambda = 0$ matches \texttt{sklearn.LogisticRegression}
+  \item[$\square$] $\lambda > 0$ produces smaller coefficient norms
+  \item[$\square$] Training history loss is monotonically non-increasing
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 13: HAZARD MODEL
+% ============================================================
+\chapter{Hazard Model (Decision Timing)}
+\label{ch:hazard}
+
+\begin{center}
+\texttt{src/models/hazard.py} --- all stubs
+\end{center}
+
+\section{Discrete-Time Hazard}
+
+Not just ``will they get in?'' but ``when will the decision arrive?''
+
+\begin{definition}[Hazard Function]
+\[
+h(t \mid \mathbf{x}) = P(\text{event at time } t \mid \text{survived to } t, \; \mathbf{x}) = \sigma(\alpha_t + \mathbf{x}^\top\boldsymbol{\beta})
+\]
+\end{definition}
+
+\textbf{Survival function}: $S(t \mid \mathbf{x}) = \prod_{j=1}^{t} (1 - h(j \mid \mathbf{x}))$.
+
+\section{Person-Period Expansion}
+
+Each student contributes multiple rows, one per time period at risk:
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[font=\small]
+  \matrix[matrix of nodes, nodes={draw, minimum width=1.5cm, minimum height=0.5cm},
+    column sep=-\pgflinewidth, row sep=-\pgflinewidth] (m) {
+    Student & Oct & Nov & Dec & Jan & Feb & Mar \\
+    A & 0 & 0 & 0 & 0 & 0 & \textbf{1} \\
+    B & 0 & 0 & \textbf{1} & & & \\
+  };
+  \node[below=0.3cm of m, font=\small\itshape] {Each cell is one row in the expanded dataset.};
+  \node[above=0.3cm of m, font=\small\bfseries] {Person-Period Data};
+\end{tikzpicture}
+\caption{Student A received a decision in March (6 rows). Student B in December (3 rows). Event=1 marks the decision.}
+\label{fig:personperiod}
+\end{figure}
+
+\begin{keyconcept}
+After person-period expansion, fit standard \texttt{LogisticModel} (Chapter~\ref{ch:irls}) on the expanded data. The hazard model \emph{reuses} the IRLS implementation entirely.
+\end{keyconcept}
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item Expansion can create large datasets ($n \times \bar{T}$ rows). Use efficient array operations.
+  \item Time dummies: \texttt{create\_time\_dummies(T)} creates $T$ binary columns.
+  \item Survival: \texttt{np.cumprod(1 - hazard\_values)}.
+  \item Median time: smallest $t$ where $S(t) \leq 0.5$.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] Expansion row count = $\sum_i t_i$
+  \item[$\square$] Hazard values in $(0, 1)$
+  \item[$\square$] $S(0) = 1.0$ and $S$ is non-increasing
+  \item[$\square$] Uncensored students have event=1 in last row only
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 14: ENTITY EMBEDDINGS
+% ============================================================
+\chapter{Entity Embeddings}
+\label{ch:embeddings}
+
+\begin{center}
+\texttt{src/models/embeddings.py} --- all stubs
+\end{center}
+
+\section{Why Embeddings?}
+
+One-hot encoding 200+ programs creates sparse, high-dimensional features. Embeddings learn dense, low-dimensional vectors that capture similarity.
+
+\textbf{Dimension formula} (fast.ai heuristic):
+\[
+d = \min\!\bigl(600, \; \lfloor 1.6 \cdot n^{0.56} \rceil\bigr)
+\]
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=0.7, font=\small]
+  % Embedding matrix
+  \draw[thick] (0,0) rectangle (3,5);
+  \node at (1.5, 5.4) {Embedding Matrix};
+
+  % Highlight row
+  \fill[modelred!20] (0, 2) rectangle (3, 2.7);
+  \draw[thick, modelred] (0, 2) rectangle (3, 2.7);
+
+  % Index arrow
+  \draw[-{Stealth}, thick] (-2, 2.35) -- (-0.2, 2.35);
+  \node[left, font=\small] at (-2, 2.35) {idx = 42};
+  \node[above left, font=\tiny] at (-2, 2.35) {``Computer Science''};
+
+  % Output arrow
+  \draw[-{Stealth}, thick] (3.2, 2.35) -- (5, 2.35);
+  \node[right, font=\small] at (5, 2.35) {$[0.3, -0.1, 0.8, \ldots]$};
+  \node[above right, font=\tiny] at (5, 2.35) {dense vector $\in \mathbb{R}^d$};
+
+  % Labels
+  \node[font=\tiny] at (1.5, -0.4) {$n_{\text{categories}} \times d$};
+\end{tikzpicture}
+\caption{Embedding lookup: category name $\to$ integer index $\to$ dense vector (row of embedding matrix).}
+\label{fig:embedding}
+\end{figure}
+
+\section{Architecture}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=0.6cm,
+  layer/.style={draw, thick, rounded corners, minimum width=2.5cm, minimum height=0.6cm, font=\small},
+  arr/.style={-{Stealth}, thick}
+]
+  % Inputs
+  \node[layer, fill=mathblue!15] (num) {GPA, sin/cos};
+  \node[layer, fill=utilgreen!15, right=1cm of num] (uni) {Uni embedding};
+  \node[layer, fill=featorange!15, right=1cm of uni] (prog) {Prog embedding};
+
+  % Concat
+  \node[layer, fill=infragray!15, below=0.8cm of uni] (cat) {Concatenate};
+
+  % Hidden
+  \node[layer, fill=evalpurple!15, below=of cat] (hidden) {Linear + ReLU};
+
+  % Output
+  \node[layer, fill=modelred!15, below=of hidden] (out) {$\sigma(\cdot) \to P(\text{admit})$};
+
+  \draw[arr] (num) -- (cat);
+  \draw[arr] (uni) -- (cat);
+  \draw[arr] (prog) -- (cat);
+  \draw[arr] (cat) -- (hidden);
+  \draw[arr] (hidden) -- (out);
+\end{tikzpicture}
+\caption{Embedding model: numeric features + learned embeddings $\to$ hidden layer $\to$ sigmoid output.}
+\label{fig:embarch}
+\end{figure}
+
+After training, extract embeddings to measure program similarity via cosine similarity (Chapter~\ref{ch:vectors}).
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item \texttt{CategoryEncoder}: build index mapping in \texttt{fit()}, convert strings to ints in \texttt{transform()}.
+  \item PyTorch: \texttt{nn.Embedding(n, d)} initializes randomly; trained via backprop.
+  \item Connection to SVD (Ch.~\ref{ch:svd}): embeddings are a learned low-rank approximation.
+  \item For interpretation: extract \texttt{model.embedding.weight.detach().numpy()}.
+\end{itemize}
+\end{implementhint}
+
+
+% ============================================================
+% CHAPTER 15: ATTENTION MECHANISMS
+% ============================================================
+\chapter{Attention Mechanisms}
+\label{ch:attention}
+
+\begin{center}
+\texttt{src/models/attention.py} --- all stubs
+\end{center}
+
+\section{Scaled Dot-Product Attention}
+
+\begin{definition}
+\[
+\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right) V
+\]
+where $Q \in \mathbb{R}^{n \times d_k}$ (queries), $K \in \mathbb{R}^{m \times d_k}$ (keys), $V \in \mathbb{R}^{m \times d_v}$ (values).
+\end{definition}
+
+\textbf{Stable softmax:}
+\[
+\text{softmax}(\mathbf{z})_i = \frac{e^{z_i - z_{\max}}}{\sum_j e^{z_j - z_{\max}}}
+\]
+Subtracting $z_{\max}$ prevents overflow.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=0.5cm and 1cm,
+  op/.style={draw, thick, rounded corners, minimum width=1.8cm, minimum height=0.6cm, font=\small},
+  arr/.style={-{Stealth}, thick}
+]
+  \node[op, fill=mathblue!15] (q) {$Q$};
+  \node[op, fill=modelred!15, right=2cm of q] (k) {$K^\top$};
+  \node[op, fill=utilgreen!15, right=4cm of q] (v) {$V$};
+
+  \node[op, fill=infragray!10, below=0.8cm of $(q)!0.5!(k)$] (mm1) {MatMul};
+  \node[op, fill=featorange!10, below=of mm1] (scale) {$\div \sqrt{d_k}$};
+  \node[op, fill=evalpurple!15, below=of scale] (sm) {Softmax};
+  \node[op, fill=infragray!10, below=of sm] (mm2) {MatMul};
+  \node[op, fill=modelred!15, below=of mm2] (out) {Output};
+
+  \draw[arr] (q) |- (mm1);
+  \draw[arr] (k) |- (mm1);
+  \draw[arr] (mm1) -- (scale);
+  \draw[arr] (scale) -- (sm);
+  \draw[arr] (sm) -- (mm2);
+  \draw[arr] (v) |- (mm2);
+  \draw[arr] (mm2) -- (out);
+\end{tikzpicture}
+\caption{Scaled dot-product attention: $Q$ and $K$ compute similarity scores, softmax normalizes, then weighted sum of $V$.}
+\label{fig:attention}
+\end{figure}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{$Q$ ($n \times d_k$), $K$ ($m \times d_k$), $V$ ($m \times d_v$)}
+\KwOut{Output ($n \times d_v$), weights ($n \times m$)}
+$S \gets QK^\top / \sqrt{d_k}$\;
+$W \gets \text{softmax}(S, \text{axis}=1)$ \tcp*{row-wise}
+$\text{output} \gets WV$\;
+\Return{output, $W$}\;
+\caption{\texttt{scaled\_dot\_product\_attention(Q, K, V)}}
+\end{algorithm}
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item \texttt{softmax}: subtract $\max(\mathbf{z})$ before \texttt{exp} to prevent overflow.
+  \item \texttt{SelfAttentionLayer}: learns $W_Q, W_K, W_V$ matrices. $Q = XW_Q$, etc.
+  \item For admission prediction: each ``token'' is a (university, program, GPA) feature vector.
+  \item Attention weights are interpretable --- show which past applicants are most relevant.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] Softmax sums to 1 within tolerance
+  \item[$\square$] Softmax invariant to constant shift ($\mathbf{z}$ vs $\mathbf{z} + c$)
+  \item[$\square$] Attention weights are non-negative
+  \item[$\square$] Output shape is correct: $(n, d_v)$
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 16: EVALUATION FRAMEWORK
+% ============================================================
+\chapter{Evaluation Framework}
+\label{ch:evaluation}
+
+\begin{center}
+\texttt{src/evaluation/\{calibration, discrimination, validation\}.py} --- $\sim$56 stubs
+\end{center}
+
+\section{Calibration}
+
+\begin{definition}[Brier Score]
+\[
+\text{BS} = \frac{1}{n}\sum_{i=1}^{n}(y_i - p_i)^2
+\]
+Decomposition: $\text{BS} = \underbrace{\text{UNC}}_{\text{data}} - \underbrace{\text{RES}}_{\text{good}} + \underbrace{\text{REL}}_{\text{bad}}$
+\end{definition}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=8cm, height=8cm,
+  xlabel={Mean predicted probability},
+  ylabel={Fraction of positives},
+  xmin=0, xmax=1, ymin=0, ymax=1,
+  axis lines=left,
+]
+  % Perfect calibration line
+  \addplot[thick, gray, dashed, domain=0:1] {x};
+
+  % Model calibration (slightly overconfident)
+  \addplot[very thick, modelred, mark=*, mark size=3pt] coordinates {
+    (0.1, 0.12) (0.2, 0.18) (0.3, 0.25) (0.4, 0.35)
+    (0.5, 0.48) (0.6, 0.55) (0.7, 0.62) (0.8, 0.78) (0.9, 0.88)
+  };
+
+  \node[font=\small, gray] at (axis cs:0.85, 0.5) {Perfect};
+  \node[font=\small, modelred] at (axis cs:0.4, 0.7) {Model};
+\end{axis}
+\end{tikzpicture}
+\caption{Reliability diagram. Points below the diagonal indicate overconfidence; above indicates underconfidence.}
+\label{fig:reliability}
+\end{figure}
+
+\textbf{Platt scaling} (post-hoc calibration): $p_{\text{cal}} = \sigma(a \cdot p_{\text{raw}} + b)$.
+
+\section{Discrimination}
+
+\begin{definition}[ROC-AUC]
+Area under the ROC curve (True Positive Rate vs False Positive Rate). AUC $= 1$ is perfect; AUC $= 0.5$ is random.
+\end{definition}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=8cm, height=8cm,
+  xlabel={False Positive Rate (FPR)},
+  ylabel={True Positive Rate (TPR)},
+  xmin=0, xmax=1, ymin=0, ymax=1,
+  axis lines=left,
+]
+  % Random baseline
+  \addplot[thick, gray, dashed, domain=0:1] {x};
+
+  % ROC curve
+  \addplot[very thick, mathblue, fill=mathblue!10, fill opacity=0.3] coordinates {
+    (0, 0) (0.02, 0.3) (0.05, 0.55) (0.1, 0.7) (0.2, 0.82)
+    (0.3, 0.88) (0.5, 0.94) (0.7, 0.97) (1.0, 1.0)
+  } \closedcycle;
+
+  % Optimal point (Youden's J)
+  \fill[modelred] (axis cs:0.1, 0.7) circle (4pt);
+  \node[font=\small, modelred, right] at (axis cs:0.12, 0.68) {Optimal ($J^*$)};
+
+  \node[font=\small, mathblue] at (axis cs:0.55, 0.4) {AUC = 0.91};
+\end{axis}
+\end{tikzpicture}
+\caption{ROC curve with AUC shaded. The optimal threshold maximizes Youden's $J = \text{TPR} - \text{FPR}$.}
+\label{fig:roc}
+\end{figure}
+
+\section{Temporal Validation}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=0.8, font=\small]
+  % Timeline
+  \draw[-{Stealth}, thick] (0,0) -- (12,0) node[right] {Time};
+  \foreach \x/\y in {0/2022, 4/2023, 8/2024, 12/2025} {
+    \draw (\x, -0.2) -- (\x, 0.2);
+    \node[below] at (\x, -0.3) {\y};
+  }
+
+  % (a) Single split
+  \node[left, font=\bfseries] at (-0.5, 1.5) {(a)};
+  \fill[mathblue!30] (0, 1) rectangle (7, 2);
+  \fill[modelred!30] (7.2, 1) rectangle (12, 2);
+  \node at (3.5, 1.5) {Train};
+  \node at (9.6, 1.5) {Test};
+
+  % (b) Expanding window
+  \node[left, font=\bfseries] at (-0.5, 4) {(b)};
+  \fill[mathblue!20] (0, 3.2) rectangle (4, 3.8);
+  \fill[modelred!20] (4.2, 3.2) rectangle (6, 3.8);
+  \fill[mathblue!30] (0, 4.2) rectangle (6, 4.8);
+  \fill[modelred!30] (6.2, 4.2) rectangle (8, 4.8);
+  \fill[mathblue!40] (0, 5.2) rectangle (8, 5.8);
+  \fill[modelred!40] (8.2, 5.2) rectangle (10, 5.8);
+
+  % (c) Purged K-Fold
+  \node[left, font=\bfseries] at (-0.5, 7.5) {(c)};
+  \fill[mathblue!30] (0, 7) rectangle (3.5, 7.6);
+  \fill[pattern=north east lines, pattern color=gray] (3.5, 7) rectangle (4.5, 7.6);
+  \fill[modelred!30] (4.5, 7) rectangle (7, 7.6);
+  \fill[pattern=north east lines, pattern color=gray] (7, 7) rectangle (8, 7.6);
+  \fill[mathblue!30] (8, 7) rectangle (12, 7.6);
+  \node[font=\tiny] at (4, 7.9) {purge};
+  \node[font=\tiny] at (7.5, 7.9) {embargo};
+\end{tikzpicture}
+\caption{Temporal validation: (a) single split, (b) expanding window CV, (c) purged K-fold with gap regions.}
+\label{fig:temporalval}
+\end{figure}
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item \texttt{brier\_score}: simply \texttt{np.mean((y - p)**2)}.
+  \item ROC: sort by predicted prob, accumulate TP/FP; AUC via \texttt{np.trapz(tpr, fpr)}.
+  \item Platt scaling: fit via \texttt{scipy.optimize.minimize} on log-loss with params $(a, b)$.
+  \item \texttt{check\_temporal\_leakage}: verify $\max(\text{train\_dates}) < \min(\text{test\_dates})$.
+  \item \texttt{PurgedKFold}: remove samples within purge\_gap of test boundary.
+\end{itemize}
+\end{implementhint}
+
+\begin{testchecklist}
+\begin{itemize}[nosep]
+  \item[$\square$] Perfect predictions: Brier $= 0$; AUC $= 1$
+  \item[$\square$] Random predictions: Brier $\approx 0.25$; AUC $\approx 0.5$
+  \item[$\square$] Brier decomposition: UNC $-$ RES $+$ REL $=$ Brier
+  \item[$\square$] Platt scaling reduces ECE
+  \item[$\square$] Temporal leakage check raises on overlapping dates
+  \item[$\square$] PurgedKFold with gap$=0$ equals standard KFold
+\end{itemize}
+\end{testchecklist}
+
+
+% ============================================================
+% CHAPTER 17: INFRASTRUCTURE
+% ============================================================
+\chapter{Infrastructure Layer}
+\label{ch:infra}
+
+\begin{center}
+\texttt{src/\{api, db\}/} --- $\sim$123 stubs total
+\end{center}
+
+\section{ETL Pipeline}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=0.4cm and 1.5cm,
+  stage/.style={draw, thick, rounded corners, minimum width=2.5cm, minimum height=0.7cm, font=\small},
+  arr/.style={-{Stealth}, thick}
+]
+  \node[stage, fill=mathblue!15] (csv) {CSVExtractor};
+  \node[stage, fill=utilgreen!15, right=of csv] (clean) {CleaningTransformer};
+  \node[stage, fill=featorange!15, right=of clean] (norm) {NormalizationTransformer};
+  \node[stage, fill=evalpurple!15, right=of norm] (valid) {ValidationTransformer};
+
+  \node[stage, fill=modelred!15, below right=0.8cm and -0.5cm of valid] (mongo) {MongoLoader};
+  \node[stage, fill=infragray!15, below left=0.8cm and -0.5cm of valid] (weaviate) {WeaviateLoader};
+
+  \draw[arr] (csv) -- (clean);
+  \draw[arr] (clean) -- (norm);
+  \draw[arr] (norm) -- (valid);
+  \draw[arr] (valid) -| (mongo);
+  \draw[arr] (valid) -| (weaviate);
+\end{tikzpicture}
+\caption{ETL pipeline: Extract (CSV) $\to$ Transform (clean, normalize, validate) $\to$ Load (MongoDB, Weaviate).}
+\label{fig:etl}
+\end{figure}
+
+\section{REST API (FastAPI)}
+
+The \texttt{PredictorService} orchestrates the full prediction pipeline:
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{\texttt{ApplicationRequest} with university, program, GPA, term}
+\KwOut{\texttt{PredictionResponse} with probability, CI, explanation}
+$\text{uni} \gets \texttt{normalizer.normalize}(\text{request.university})$ \tcp*{Ch.~\ref{ch:normalize}}
+$\text{prog} \gets \texttt{normalizer.normalize}(\text{request.program})$\;
+$\mathbf{x} \gets \texttt{encoder.transform}(\text{uni, prog, gpa, term})$ \tcp*{Ch.~\ref{ch:encoders}}
+$X \gets \texttt{builder.transform}(\mathbf{x})$ \tcp*{Ch.~\ref{ch:designmatrix}}
+$p_{\text{raw}} \gets \texttt{model.predict\_proba}(X)$ \tcp*{Ch.~\ref{ch:irls}}
+$p_{\text{cal}} \gets \sigma(a \cdot p_{\text{raw}} + b)$ \tcp*{Ch.~\ref{ch:evaluation}}
+$\text{CI} \gets \texttt{delta\_method}(X, \text{model})$\;
+$\text{similar} \gets \texttt{weaviate.find\_similar}(\text{prog\_embedding})$\;
+\Return{\texttt{PredictionResponse}($p_{\text{cal}}$, CI, similar)}\;
+\caption{\texttt{PredictorService.predict(request)} --- end-to-end through all 6 layers}
+\end{algorithm}
+
+\textbf{Endpoints:}
+\begin{itemize}[nosep]
+  \item \texttt{POST /predict} --- single prediction
+  \item \texttt{POST /predict/batch} --- batch predictions
+  \item \texttt{GET /health} --- service health check
+  \item \texttt{GET /model/info} --- model metadata
+\end{itemize}
+
+\section{Databases}
+
+\textbf{MongoDB} (document store): CRUD for student/application records, aggregation pipelines for admission rate statistics.
+
+\textbf{Weaviate} (vector DB): stores program embeddings for similarity search. Hybrid search blends keyword (BM25) and vector (cosine) with weight $\alpha$.
+
+\begin{implementhint}
+\begin{itemize}[nosep]
+  \item FastAPI: \texttt{@app.post("/predict")} with Pydantic model validation.
+  \item MongoDB: \texttt{pymongo.MongoClient()}. Aggregation for rates: \texttt{\$match} $\to$ \texttt{\$group} $\to$ \texttt{\$project}.
+  \item Weaviate alpha: experiment with $0.3$--$0.7$ for best hybrid results.
+  \item Confidence intervals via delta method: $\text{SE} = \sqrt{\mathbf{x}^\top (X^\top W X + \lambda I)^{-1}\mathbf{x}}$.
+\end{itemize}
+\end{implementhint}
+
+
+% ============================================================
+% CHAPTER 18: VISUALIZATION REFERENCE
+% ============================================================
+\chapter{Visualization Reference}
+\label{ch:viz}
+
+\begin{center}
+\texttt{src/visualization/\{eval\_viz, math\_viz\}.py} --- $\sim$44 stubs
+\end{center}
+
+The visualization modules provide plotting functions for every concept in this guide. Below is a mapping of visualization functions to their relevant chapters.
+
+\begin{table}[H]
+\centering
+\caption{Math visualization functions and their chapter references.}
+\begin{tabularx}{\textwidth}{l X l}
+\toprule
+\textbf{Function} & \textbf{What it plots} & \textbf{Chapter} \\
+\midrule
+\texttt{plot\_vector\_projection} & 2D/3D projection of $\mathbf{v}$ onto $\mathbf{u}$ & Ch.~\ref{ch:vectors}, \ref{ch:projections} \\
+\texttt{plot\_gram\_schmidt\_process} & Step-by-step orthogonalization & Ch.~\ref{ch:projections} \\
+\texttt{plot\_svd\_decomposition} & $U\Sigma V^\top$ heatmap visualization & Ch.~\ref{ch:svd} \\
+\texttt{plot\_singular\_values} & Scree plot with threshold & Ch.~\ref{ch:svd} \\
+\texttt{plot\_ridge\_path} & Coefficient traces vs $\lambda$ & Ch.~\ref{ch:ridge} \\
+\texttt{plot\_irls\_convergence} & Loss per iteration & Ch.~\ref{ch:irls} \\
+\texttt{plot\_embeddings\_2d} & t-SNE of learned embeddings & Ch.~\ref{ch:embeddings} \\
+\texttt{plot\_similarity\_heatmap} & Cosine similarity matrix & Ch.~\ref{ch:embeddings} \\
+\texttt{plot\_attention\_weights} & Attention weight heatmap & Ch.~\ref{ch:attention} \\
+\texttt{plot\_correlation\_matrix} & Feature correlation heatmap & Ch.~\ref{ch:designmatrix} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Evaluation visualization functions and their chapter references.}
+\begin{tabularx}{\textwidth}{l X l}
+\toprule
+\textbf{Function} & \textbf{What it plots} & \textbf{Chapter} \\
+\midrule
+\texttt{plot\_reliability\_diagram} & Calibration curve with confidence bands & Ch.~\ref{ch:evaluation} \\
+\texttt{plot\_brier\_decomposition} & Stacked bar: UNC, RES, REL & Ch.~\ref{ch:evaluation} \\
+\texttt{plot\_roc\_curve} & ROC with AUC shading & Ch.~\ref{ch:evaluation} \\
+\texttt{plot\_pr\_curve} & Precision-Recall curve & Ch.~\ref{ch:evaluation} \\
+\texttt{plot\_lift\_chart} & Lift vs random baseline & Ch.~\ref{ch:evaluation} \\
+\texttt{plot\_confusion\_matrix} & Confusion matrix heatmap & Ch.~\ref{ch:evaluation} \\
+\texttt{plot\_threshold\_metrics} & Metrics vs decision threshold & Ch.~\ref{ch:evaluation} \\
+\texttt{plot\_subgroup\_performance} & AUC by university/program & Ch.~\ref{ch:evaluation} \\
+\texttt{plot\_performance\_over\_time} & Temporal metric trends & Ch.~\ref{ch:evaluation} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+
+% ============================================================
+% APPENDICES
+% ============================================================
+\appendix
+
+\chapter{Mathematical Notation Reference}
+\label{app:notation}
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+\textbf{Symbol} & \textbf{Type} & \textbf{Meaning} \\
+\midrule
+$\mathbf{v}, \mathbf{u}, \mathbf{x}$ & Vector & Lowercase bold \\
+$A, X, W, H$ & Matrix & Uppercase \\
+$\alpha, \beta, \lambda, \sigma$ & Scalar & Greek lowercase \\
+$I_n$ & Matrix & $n \times n$ identity \\
+$\|\mathbf{v}\|_p$ & Scalar & $p$-norm of $\mathbf{v}$ \\
+$A^\top$ & Matrix & Transpose \\
+$A^{-1}$ & Matrix & Inverse \\
+$\kappa(A)$ & Scalar & Condition number $\sigma_{\max}/\sigma_{\min}$ \\
+$\sigma(\cdot)$ & Function & Sigmoid: $1/(1+e^{-z})$ \\
+$\text{Beta}(\alpha, \beta)$ & Distribution & Beta distribution \\
+$\operatorname{diag}(\mathbf{w})$ & Matrix & Diagonal matrix from vector \\
+$\odot$ & Operator & Element-wise (Hadamard) product \\
+$\nabla$ & Operator & Gradient \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+
+\chapter{Test Coverage Map}
+\label{app:testmap}
+
+\begin{table}[H]
+\centering
+\caption{Test files mapped to source files and guide chapters.}
+\begin{tabularx}{\textwidth}{l l l}
+\toprule
+\textbf{Test File} & \textbf{Source File} & \textbf{Chapter} \\
+\midrule
+\texttt{test\_vectors.py} & \texttt{src/math/vectors.py} & Ch.~\ref{ch:vectors} \\
+\texttt{test\_matrices.py} & \texttt{src/math/matrices.py} & Ch.~\ref{ch:matrices} \\
+\texttt{test\_projections.py} & \texttt{src/math/projections.py} & Ch.~\ref{ch:projections} \\
+\texttt{test\_qr.py} & \texttt{src/math/qr.py} & Ch.~\ref{ch:qr} \\
+\texttt{test\_svd.py} & \texttt{src/math/svd.py} & Ch.~\ref{ch:svd} \\
+\texttt{test\_ridge.py} & \texttt{src/math/ridge.py} & Ch.~\ref{ch:ridge} \\
+\texttt{test\_base.py} & \texttt{src/models/base.py} & Ch.~\ref{ch:baseline} \\
+\texttt{test\_baseline.py} & \texttt{src/models/baseline.py} & Ch.~\ref{ch:baseline} \\
+\texttt{test\_logistic.py} & \texttt{src/models/logistic.py} & Ch.~\ref{ch:irls} \\
+\texttt{test\_hazard.py} & \texttt{src/models/hazard.py} & Ch.~\ref{ch:hazard} \\
+\texttt{test\_embeddings.py} & \texttt{src/models/embeddings.py} & Ch.~\ref{ch:embeddings} \\
+\texttt{test\_attention.py} & \texttt{src/models/attention.py} & Ch.~\ref{ch:attention} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+
+\chapter{YAML Mapping Schemas}
+\label{app:yaml}
+
+\section{universities.yaml}
+
+\begin{lstlisting}[language={}, caption={University mapping format (102 entries).}]
+University of Toronto:
+  - UofT
+  - U of T
+  - University of Toronto St. George
+  - UTSG
+
+Toronto Metropolitan University:
+  - Ryerson
+  - Ryerson University
+  - TMU
+\end{lstlisting}
+
+\section{base\_programs.yaml}
+
+\begin{lstlisting}[language={}, caption={Program mapping format (200+ entries).}]
+Computer Science:
+  - CS
+  - Comp Sci
+  - CompSci
+  - Computer Sci
+
+Engineering:
+  - Eng
+  - Engineering Science
+  - EngSci
+\end{lstlisting}
+
+\section{decisions.yaml}
+
+Four categories: \texttt{Accepted}, \texttt{Rejected}, \texttt{Waitlisted}, \texttt{Deferred}, each with a list of string variations.
+
+\section{degree\_abbreviations.yaml}
+
+Maps degree codes to full names: BSc, BA, BEng, BASc, BCom, BBA, etc. (200+ entries).
+
+
+\end{document}

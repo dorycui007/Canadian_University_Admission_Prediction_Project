@@ -323,7 +323,16 @@ def sigmoid(z: np.ndarray) -> np.ndarray:
     result[~pos_mask] = np.exp(z[~pos_mask]) / (1 + np.exp(z[~pos_mask]))
     return result
     """
-    pass
+    z = np.asarray(z, dtype=float)
+    result = np.zeros_like(z, dtype=float)
+    pos_mask = z >= 0
+    result[pos_mask] = 1.0 / (1.0 + np.exp(-z[pos_mask]))
+    neg_z = z[~pos_mask]
+    exp_z = np.exp(neg_z)
+    result[~pos_mask] = exp_z / (1.0 + exp_z)
+    # Clip to (0, 1) open interval to handle floating-point saturation
+    result = np.clip(result, 1e-15, 1.0 - 1e-15)
+    return result
 
 
 def log_loss(
@@ -361,7 +370,8 @@ def log_loss(
     p = np.clip(p, eps, 1 - eps)
     return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
     """
-    pass
+    p = np.clip(p, eps, 1 - eps)
+    return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
 
 
 def compute_gradient(
@@ -402,7 +412,7 @@ def compute_gradient(
     ────────────────
     return X.T @ (p - y) + lambda_ * beta
     """
-    pass
+    return X.T @ (p - y) + lambda_ * beta
 
 
 def compute_hessian(
@@ -448,7 +458,11 @@ def compute_hessian(
     H = X_weighted.T @ X_weighted + lambda_ * np.eye(X.shape[1])
     return H
     """
-    pass
+    w = p * (1 - p)
+    w = np.clip(w, 1e-10, 0.25)
+    X_weighted = X * np.sqrt(w)[:, np.newaxis]
+    H = X_weighted.T @ X_weighted + lambda_ * np.eye(X.shape[1])
+    return H
 
 
 def irls_step(
@@ -493,7 +507,14 @@ def irls_step(
        from ..math.ridge import weighted_ridge_solve
        return weighted_ridge_solve(X, z, w, lambda_)
     """
-    pass
+    eta = X @ beta
+    p = sigmoid(eta)
+    p = np.clip(p, 1e-10, 1 - 1e-10)
+    w = p * (1 - p)
+    w = np.clip(w, 1e-10, 0.25)
+    z = eta + (y - p) / w
+    from ..math.ridge import weighted_ridge_solve
+    return weighted_ridge_solve(X, z, w, lambda_)
 
 
 class LogisticModel:
@@ -555,27 +576,35 @@ class LogisticModel:
             self.training_history = {'loss': [], 'grad_norm': []}
             self.n_iter_ = 0
         """
-        pass
+        self.lambda_ = lambda_
+        self.max_iter = max_iter
+        self.tol = tol
+        self.fit_intercept = fit_intercept
+        self.verbose = verbose
+        self.coefficients = None
+        self._is_fitted = False
+        self.training_history = {'loss': [], 'grad_norm': []}
+        self.n_iter_ = 0
 
     @property
     def name(self) -> str:
         """Model name."""
-        pass
+        return "IRLS Logistic Regression"
 
     @property
     def is_fitted(self) -> bool:
         """Check if model is fitted."""
-        pass
+        return self._is_fitted
 
     @property
     def n_features(self) -> Optional[int]:
         """Number of features (including intercept if fitted)."""
-        pass
+        return len(self.coefficients) if self.coefficients is not None else None
 
     @property
     def n_params(self) -> int:
         """Number of learnable parameters."""
-        pass
+        return len(self.coefficients) if self.coefficients is not None else 0
 
     def _add_intercept(self, X: np.ndarray) -> np.ndarray:
         """
@@ -600,7 +629,7 @@ class LogisticModel:
         ────────────────
         return np.column_stack([np.ones(X.shape[0]), X])
         """
-        pass
+        return np.column_stack([np.ones(X.shape[0]), X])
 
     def fit(
         self,
@@ -652,7 +681,29 @@ class LogisticModel:
         6. self.n_iter_ = iter + 1
         7. Return self
         """
-        pass
+        if self.fit_intercept:
+            X = self._add_intercept(X)
+        beta = np.zeros(X.shape[1])
+        for i in range(self.max_iter):
+            beta_new = irls_step(X, y, beta, self.lambda_)
+            diff = np.linalg.norm(beta_new - beta)
+            p = sigmoid(X @ beta_new)
+            loss = log_loss(y, p)
+            grad = compute_gradient(X, y, p, beta_new, self.lambda_)
+            grad_norm = np.linalg.norm(grad)
+            self.training_history['loss'].append(loss)
+            self.training_history['grad_norm'].append(grad_norm)
+            if self.verbose:
+                print(f"Iter {i+1}: loss={loss:.6f}, grad_norm={grad_norm:.6f}, diff={diff:.6f}")
+            if diff < self.tol:
+                self.n_iter_ = i + 1
+                break
+            beta = beta_new
+        else:
+            self.n_iter_ = self.max_iter
+        self.coefficients = beta_new
+        self._is_fitted = True
+        return self
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """
@@ -675,7 +726,11 @@ class LogisticModel:
             X = self._add_intercept(X)
         return sigmoid(X @ self.coefficients)
         """
-        pass
+        if not self._is_fitted:
+            raise RuntimeError("Model not fitted")
+        if self.fit_intercept:
+            X = self._add_intercept(X)
+        return sigmoid(X @ self.coefficients)
 
     def predict(self, X: np.ndarray, threshold: float = 0.5) -> np.ndarray:
         """
@@ -688,7 +743,8 @@ class LogisticModel:
         Returns:
             Binary predictions (0 or 1)
         """
-        pass
+        probs = self.predict_proba(X)
+        return (probs >= threshold).astype(int)
 
     def get_feature_importance(
         self,
@@ -721,7 +777,13 @@ class LogisticModel:
             >>> for name, imp in importance.items():
             ...     print(f"{name}: {imp:.3f}")
         """
-        pass
+        if not self._is_fitted:
+            return None
+        coefs = self.coefficients
+        if feature_names is None:
+            feature_names = [f"feature_{i}" for i in range(len(coefs))]
+        importance = {name: abs(c) for name, c in zip(feature_names, coefs)}
+        return dict(sorted(importance.items(), key=lambda x: x[1], reverse=True))
 
     def get_odds_ratios(
         self,
@@ -755,15 +817,36 @@ class LogisticModel:
         Returns:
             Dict mapping feature name → odds ratio
         """
-        pass
+        if not self._is_fitted:
+            return None
+        coefs = self.coefficients
+        if feature_names is None:
+            feature_names = [f"feature_{i}" for i in range(len(coefs))]
+        return {name: np.exp(c) for name, c in zip(feature_names, coefs)}
 
     def get_params(self) -> Dict[str, Any]:
         """Get model parameters for serialization."""
-        pass
+        return {
+            'coefficients': self.coefficients.tolist() if isinstance(self.coefficients, np.ndarray) else self.coefficients,
+            'lambda_': self.lambda_,
+            'max_iter': self.max_iter,
+            'tol': self.tol,
+            'fit_intercept': self.fit_intercept,
+        }
 
     def set_params(self, params: Dict[str, Any]) -> None:
         """Set model parameters from serialization."""
-        pass
+        if 'coefficients' in params and params['coefficients'] is not None:
+            self.coefficients = np.array(params['coefficients'])
+            self._is_fitted = True
+        if 'lambda_' in params:
+            self.lambda_ = params['lambda_']
+        if 'max_iter' in params:
+            self.max_iter = params['max_iter']
+        if 'tol' in params:
+            self.tol = params['tol']
+        if 'fit_intercept' in params:
+            self.fit_intercept = params['fit_intercept']
 
 
 # =============================================================================

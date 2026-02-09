@@ -427,7 +427,8 @@ def brier_score(y_true: np.ndarray, y_prob: np.ndarray) -> float:
         y_prob = np.array([0.9, 0.8, 0.3, 0.2])
         score = brier_score(y_true, y_prob)  # ≈ 0.045
     """
-    pass
+    validate_probability_inputs(y_true, y_prob)
+    return float(np.mean((y_prob - y_true) ** 2))
 
 
 def brier_score_decomposition(y_true: np.ndarray,
@@ -467,7 +468,34 @@ def brier_score_decomposition(y_true: np.ndarray,
     Returns:
         BrierDecomposition with uncertainty, resolution, reliability
     """
-    pass
+    validate_probability_inputs(y_true, y_prob)
+    n = len(y_true)
+    y_bar = np.mean(y_true)
+    UNC = y_bar * (1.0 - y_bar)
+
+    bin_indices, bin_edges = bin_predictions(y_prob, n_bins=n_bins, strategy='uniform')
+
+    RES = 0.0
+    REL = 0.0
+    for k in range(n_bins):
+        mask = bin_indices == k
+        n_k = np.sum(mask)
+        if n_k == 0:
+            continue
+        y_bar_k = np.mean(y_true[mask])
+        p_bar_k = np.mean(y_prob[mask])
+        RES += n_k * (y_bar_k - y_bar) ** 2
+        REL += n_k * (p_bar_k - y_bar_k) ** 2
+    RES /= n
+    REL /= n
+
+    brier_val = UNC - RES + REL
+    return BrierDecomposition(
+        uncertainty=UNC,
+        resolution=RES,
+        reliability=REL,
+        brier=brier_val,
+    )
 
 
 def expected_calibration_error(y_true: np.ndarray,
@@ -508,7 +536,20 @@ def expected_calibration_error(y_true: np.ndarray,
     Returns:
         ECE value in range [0, 1], lower is better
     """
-    pass
+    validate_probability_inputs(y_true, y_prob)
+    n = len(y_true)
+    bin_indices, bin_edges = bin_predictions(y_prob, n_bins=n_bins, strategy=strategy)
+
+    ece = 0.0
+    for m in range(n_bins):
+        mask = bin_indices == m
+        n_m = np.sum(mask)
+        if n_m == 0:
+            continue
+        acc = np.mean(y_true[mask])
+        conf = np.mean(y_prob[mask])
+        ece += (n_m / n) * abs(acc - conf)
+    return float(ece)
 
 
 def maximum_calibration_error(y_true: np.ndarray,
@@ -543,7 +584,35 @@ def maximum_calibration_error(y_true: np.ndarray,
     Returns:
         MCE value in range [0, 1]
     """
-    pass
+    validate_probability_inputs(y_true, y_prob)
+    bin_indices, bin_edges = bin_predictions(y_prob, n_bins=n_bins, strategy='uniform')
+
+    max_error = 0.0
+    found_valid = False
+    for m in range(n_bins):
+        mask = bin_indices == m
+        n_m = np.sum(mask)
+        if n_m < min_samples:
+            continue
+        found_valid = True
+        acc = np.mean(y_true[mask])
+        conf = np.mean(y_prob[mask])
+        error = abs(acc - conf)
+        if error > max_error:
+            max_error = error
+    if not found_valid:
+        # If no bins meet min_samples, fall back to considering all non-empty bins
+        for m in range(n_bins):
+            mask = bin_indices == m
+            n_m = np.sum(mask)
+            if n_m == 0:
+                continue
+            acc = np.mean(y_true[mask])
+            conf = np.mean(y_prob[mask])
+            error = abs(acc - conf)
+            if error > max_error:
+                max_error = error
+    return float(max_error)
 
 
 # =============================================================================
@@ -591,7 +660,22 @@ def compute_reliability_diagram(y_true: np.ndarray,
            - Count samples
         4. Handle empty bins (return NaN)
     """
-    pass
+    validate_probability_inputs(y_true, y_prob)
+    bin_indices, bin_edges = bin_predictions(y_prob, n_bins=n_bins, strategy=strategy)
+
+    bin_centers = np.zeros(n_bins)
+    bin_accuracies = np.full(n_bins, np.nan)
+    bin_counts = np.zeros(n_bins, dtype=int)
+
+    for m in range(n_bins):
+        bin_centers[m] = (bin_edges[m] + bin_edges[m + 1]) / 2.0
+        mask = bin_indices == m
+        n_m = np.sum(mask)
+        bin_counts[m] = n_m
+        if n_m > 0:
+            bin_accuracies[m] = np.mean(y_true[mask])
+
+    return (bin_edges, bin_centers, bin_accuracies, bin_counts)
 
 
 def calibration_curve(y_true: np.ndarray,
@@ -624,7 +708,21 @@ def calibration_curve(y_true: np.ndarray,
     Returns:
         Tuple of (mean_predicted, fraction_positives) arrays
     """
-    pass
+    validate_probability_inputs(y_true, y_prob)
+    bin_indices, bin_edges = bin_predictions(y_prob, n_bins=n_bins, strategy=strategy)
+
+    mean_predicted_list = []
+    fraction_positives_list = []
+
+    for m in range(n_bins):
+        mask = bin_indices == m
+        n_m = np.sum(mask)
+        if n_m == 0:
+            continue
+        mean_predicted_list.append(np.mean(y_prob[mask]))
+        fraction_positives_list.append(np.mean(y_true[mask]))
+
+    return (np.array(mean_predicted_list), np.array(fraction_positives_list))
 
 
 # =============================================================================
@@ -667,7 +765,39 @@ def full_calibration_analysis(y_true: np.ndarray,
         6. Compute reliability diagram data
         7. Package into CalibrationResult
     """
-    pass
+    if config is None:
+        config = CalibrationConfig()
+
+    validate_probability_inputs(y_true, y_prob)
+
+    bs = brier_score(y_true, y_prob)
+    decomp = brier_score_decomposition(y_true, y_prob, n_bins=config.n_bins)
+    ece = expected_calibration_error(y_true, y_prob, n_bins=config.n_bins, strategy=config.strategy)
+    mce = maximum_calibration_error(y_true, y_prob, n_bins=config.n_bins, min_samples=config.min_samples_per_bin)
+    bin_edges, bin_centers, bin_accuracies, bin_counts = compute_reliability_diagram(
+        y_true, y_prob, n_bins=config.n_bins, strategy=config.strategy
+    )
+
+    # Compute bin_confidences (mean predicted prob per bin)
+    bin_indices, _ = bin_predictions(y_prob, n_bins=config.n_bins, strategy=config.strategy)
+    bin_confidences = np.full(config.n_bins, np.nan)
+    for m in range(config.n_bins):
+        mask = bin_indices == m
+        if np.sum(mask) > 0:
+            bin_confidences[m] = np.mean(y_prob[mask])
+
+    return CalibrationResult(
+        brier_score=bs,
+        ece=ece,
+        mce=mce,
+        uncertainty=decomp.uncertainty,
+        resolution=decomp.resolution,
+        reliability=decomp.reliability,
+        bin_edges=bin_edges,
+        bin_counts=bin_counts,
+        bin_accuracies=bin_accuracies,
+        bin_confidences=bin_confidences,
+    )
 
 
 # =============================================================================
@@ -710,7 +840,10 @@ def compare_calibration(models: Dict[str, Tuple[np.ndarray, np.ndarray]],
     Returns:
         Dict of model_name → CalibrationResult
     """
-    pass
+    results = {}
+    for name, (y_true, y_prob) in models.items():
+        results[name] = full_calibration_analysis(y_true, y_prob, config=config)
+    return results
 
 
 # =============================================================================
@@ -757,7 +890,25 @@ def calibration_confidence_intervals(y_true: np.ndarray,
     Returns:
         Tuple of (bin_accuracies, ci_lower, ci_upper)
     """
-    pass
+    validate_probability_inputs(y_true, y_prob)
+    bin_indices, bin_edges = bin_predictions(y_prob, n_bins=n_bins, strategy='uniform')
+
+    bin_accuracies = np.full(n_bins, np.nan)
+    ci_lower = np.full(n_bins, np.nan)
+    ci_upper = np.full(n_bins, np.nan)
+
+    for m in range(n_bins):
+        mask = bin_indices == m
+        n_m = int(np.sum(mask))
+        if n_m == 0:
+            continue
+        successes = int(np.sum(y_true[mask]))
+        bin_accuracies[m] = successes / n_m
+        lo, hi = wilson_confidence_interval(successes, n_m, confidence_level)
+        ci_lower[m] = lo
+        ci_upper[m] = hi
+
+    return (bin_accuracies, ci_lower, ci_upper)
 
 
 def wilson_confidence_interval(successes: int,
@@ -792,7 +943,31 @@ def wilson_confidence_interval(successes: int,
     Returns:
         Tuple of (lower_bound, upper_bound)
     """
-    pass
+    if trials == 0:
+        return (0.0, 1.0)
+
+    p_hat = successes / trials
+    n = trials
+
+    # z-score lookup for common confidence levels
+    # Using approximation from normal distribution inverse CDF
+    alpha = 1.0 - confidence_level
+    # Rational approximation of inverse normal CDF (Abramowitz & Stegun)
+    p = 1.0 - alpha / 2.0
+    # Approximation for probit function
+    t = np.sqrt(-2.0 * np.log(1.0 - p))
+    c0, c1, c2 = 2.515517, 0.802853, 0.010328
+    d1, d2, d3 = 1.432788, 0.189269, 0.001308
+    z = t - (c0 + c1 * t + c2 * t ** 2) / (1.0 + d1 * t + d2 * t ** 2 + d3 * t ** 3)
+
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    center = (p_hat + z2 / (2.0 * n)) / denom
+    margin = z * np.sqrt(p_hat * (1.0 - p_hat) / n + z2 / (4.0 * n ** 2)) / denom
+
+    lower = max(0.0, center - margin)
+    upper = min(1.0, center + margin)
+    return (lower, upper)
 
 
 # =============================================================================
@@ -839,7 +1014,168 @@ def hosmer_lemeshow_test(y_true: np.ndarray,
     Returns:
         Tuple of (chi_squared_statistic, p_value)
     """
-    pass
+    validate_probability_inputs(y_true, y_prob)
+    n = len(y_true)
+
+    # Sort by predicted probability
+    order = np.argsort(y_prob)
+    y_true_sorted = y_true[order]
+    y_prob_sorted = y_prob[order]
+
+    # Divide into n_groups quantile-based groups
+    group_size = n // n_groups
+    chi2 = 0.0
+
+    for k in range(n_groups):
+        start = k * group_size
+        if k == n_groups - 1:
+            end = n  # last group gets remainder
+        else:
+            end = (k + 1) * group_size
+
+        if start >= end:
+            continue
+
+        y_true_k = y_true_sorted[start:end]
+        y_prob_k = y_prob_sorted[start:end]
+        n_k = end - start
+
+        O_k = np.sum(y_true_k)  # observed positives
+        pi_k = np.mean(y_prob_k)  # mean predicted probability
+        E_k = n_k * pi_k  # expected positives
+
+        # Avoid division by zero
+        denom = E_k * (1.0 - pi_k)
+        if denom > 1e-12:
+            chi2 += (O_k - E_k) ** 2 / denom
+
+    # Degrees of freedom = n_groups - 2
+    df = n_groups - 2
+    if df <= 0:
+        df = 1
+
+    # Compute p-value from chi-squared distribution using regularized gamma function
+    # Approximate using the incomplete gamma function
+    # P(X > x) = 1 - regularized_lower_gamma(df/2, x/2)
+    p_value = _chi2_survival(chi2, df)
+
+    return (float(chi2), float(p_value))
+
+
+def _chi2_survival(x: float, df: int) -> float:
+    """Compute survival function (1 - CDF) for chi-squared distribution."""
+    if x <= 0:
+        return 1.0
+    # Use regularized incomplete gamma function approximation
+    a = df / 2.0
+    z = x / 2.0
+    # For the regularized lower incomplete gamma function gamma(a, z) / Gamma(a)
+    # Use series expansion for small z, continued fraction for large z
+    return 1.0 - _regularized_gamma_lower(a, z)
+
+
+def _regularized_gamma_lower(a: float, x: float) -> float:
+    """Regularized lower incomplete gamma function P(a, x) = gamma(a,x)/Gamma(a)."""
+    if x < 0:
+        return 0.0
+    if x == 0:
+        return 0.0
+    if x < a + 1:
+        # Series expansion
+        return _gamma_series(a, x)
+    else:
+        # Continued fraction (complement)
+        return 1.0 - _gamma_cf(a, x)
+
+
+def _gamma_series(a: float, x: float) -> float:
+    """Series expansion for regularized lower incomplete gamma."""
+    max_iter = 200
+    eps = 1e-12
+    ap = a
+    s = 1.0 / a
+    delta = s
+    for _ in range(max_iter):
+        ap += 1.0
+        delta *= x / ap
+        s += delta
+        if abs(delta) < abs(s) * eps:
+            break
+    return s * np.exp(-x + a * np.log(x) - _log_gamma(a))
+
+
+def _gamma_cf(a: float, x: float) -> float:
+    """Continued fraction for regularized upper incomplete gamma Q(a,x)."""
+    max_iter = 200
+    eps = 1e-12
+    tiny = 1e-30
+
+    b = x + 1.0 - a
+    c = 1.0 / tiny
+    d = 1.0 / b
+    h = d
+
+    for i in range(1, max_iter + 1):
+        an = -i * (i - a)
+        b += 2.0
+        d = an * d + b
+        if abs(d) < tiny:
+            d = tiny
+        c = b + an / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < eps:
+            break
+
+    return h * np.exp(-x + a * np.log(x) - _log_gamma(a))
+
+
+def _log_gamma(x: float) -> float:
+    """Stirling's approximation for log(Gamma(x))."""
+    if x <= 0:
+        return 0.0
+    # Lanczos approximation
+    g = 7
+    coef = [
+        0.99999999999980993,
+        676.5203681218851,
+        -1259.1392167224028,
+        771.32342877765313,
+        -176.61502916214059,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.9843695780195716e-6,
+        1.5056327351493116e-7,
+    ]
+    if x < 0.5:
+        return np.log(np.pi / np.sin(np.pi * x)) - _log_gamma(1.0 - x)
+    x -= 1
+    a = coef[0]
+    t = x + g + 0.5
+    for i in range(1, len(coef)):
+        a += coef[i] / (x + i)
+    return 0.5 * np.log(2 * np.pi) + (x + 0.5) * np.log(t) - t + np.log(a)
+
+
+def _normal_cdf(x: float) -> float:
+    """Approximate standard normal CDF using error function approximation."""
+    # Use the relationship: Phi(x) = 0.5 * (1 + erf(x / sqrt(2)))
+    return 0.5 * (1.0 + _erf(x / np.sqrt(2.0)))
+
+
+def _erf(x: float) -> float:
+    """Approximate error function."""
+    # Abramowitz and Stegun approximation 7.1.26
+    sign = 1.0 if x >= 0 else -1.0
+    x = abs(x)
+    a1, a2, a3, a4, a5 = 0.254829592, -0.284496736, 1.421413741, -1.453152027, 1.061405429
+    p = 0.3275911
+    t = 1.0 / (1.0 + p * x)
+    y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * np.exp(-x * x)
+    return sign * y
 
 
 def calibration_test(y_true: np.ndarray,
@@ -874,7 +1210,25 @@ def calibration_test(y_true: np.ndarray,
     Returns:
         Tuple of (test_statistic, p_value)
     """
-    pass
+    if method == 'hosmer_lemeshow':
+        return hosmer_lemeshow_test(y_true, y_prob)
+
+    # Spiegelhalter's z-test
+    validate_probability_inputs(y_true, y_prob)
+
+    p = y_prob
+    y = y_true
+
+    numerator = np.sum((p - y) * (1.0 - 2.0 * p))
+    denominator_sq = np.sum(p * (1.0 - p) * (1.0 - 2.0 * p) ** 2)
+
+    if denominator_sq < 1e-15:
+        return (0.0, 1.0)
+
+    z = numerator / np.sqrt(denominator_sq)
+    p_value = 2.0 * (1.0 - _normal_cdf(abs(z)))
+
+    return (float(z), float(p_value))
 
 
 # =============================================================================
@@ -919,7 +1273,17 @@ def subgroup_calibration(y_true: np.ndarray,
     Returns:
         Dict of group → CalibrationResult
     """
-    pass
+    if config is None:
+        config = CalibrationConfig()
+
+    results = {}
+    unique_groups = np.unique(groups)
+    for group in unique_groups:
+        mask = groups == group
+        y_true_g = y_true[mask]
+        y_prob_g = y_prob[mask]
+        results[group] = full_calibration_analysis(y_true_g, y_prob_g, config=config)
+    return results
 
 
 # =============================================================================
@@ -962,7 +1326,33 @@ def platt_scaling_params(y_true: np.ndarray,
         - Regularize to avoid numerical issues near p=0 or p=1
         - MUST fit on held-out validation data, not training data
     """
-    pass
+    validate_probability_inputs(y_true, y_prob)
+
+    eps = 1e-7
+    y_prob_clipped = np.clip(y_prob, eps, 1.0 - eps)
+    log_odds = np.log(y_prob_clipped / (1.0 - y_prob_clipped))
+
+    # Fit A and B by minimizing cross-entropy via simple gradient descent
+    A = 1.0
+    B = 0.0
+    lr = 0.01
+    n = len(y_true)
+
+    for _ in range(1000):
+        z = A * log_odds + B
+        # Sigmoid
+        p = 1.0 / (1.0 + np.exp(-np.clip(z, -500, 500)))
+        p = np.clip(p, eps, 1.0 - eps)
+
+        # Gradients of cross-entropy: -sum(y*log(p) + (1-y)*log(1-p))
+        diff = p - y_true
+        grad_A = np.mean(diff * log_odds)
+        grad_B = np.mean(diff)
+
+        A -= lr * grad_A
+        B -= lr * grad_B
+
+    return (float(A), float(B))
 
 
 def apply_platt_scaling(y_prob: np.ndarray, A: float, B: float) -> np.ndarray:
@@ -987,7 +1377,11 @@ def apply_platt_scaling(y_prob: np.ndarray, A: float, B: float) -> np.ndarray:
     Returns:
         Calibrated probabilities
     """
-    pass
+    eps = 1e-7
+    y_prob_clipped = np.clip(y_prob, eps, 1.0 - eps)
+    log_odds = np.log(y_prob_clipped / (1.0 - y_prob_clipped))
+    z = A * log_odds + B
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -500, 500)))
 
 
 def isotonic_calibration(y_true: np.ndarray,
@@ -1028,7 +1422,45 @@ def isotonic_calibration(y_true: np.ndarray,
     Implementation:
         Use Pool Adjacent Violators (PAV) algorithm
     """
-    pass
+    # Sort by y_prob
+    order = np.argsort(y_prob)
+    y_true_sorted = y_true[order].astype(float)
+
+    # Pool Adjacent Violators (PAV) algorithm
+    n = len(y_true_sorted)
+    result = y_true_sorted.copy()
+    # Track blocks: each element starts as its own block
+    block_start = list(range(n))
+    block_end = list(range(n))
+    block_value = result.copy()
+    block_weight = np.ones(n)
+
+    # Build blocks from left to right
+    blocks = []  # list of (start, end, value, weight)
+    for i in range(n):
+        blocks.append([i, i, result[i], 1.0])
+        # Merge with previous block if violator
+        while len(blocks) >= 2 and blocks[-2][2] > blocks[-1][2]:
+            # Merge last two blocks
+            prev = blocks[-2]
+            curr = blocks[-1]
+            new_weight = prev[3] + curr[3]
+            new_value = (prev[2] * prev[3] + curr[2] * curr[3]) / new_weight
+            merged = [prev[0], curr[1], new_value, new_weight]
+            blocks.pop()
+            blocks.pop()
+            blocks.append(merged)
+
+    # Write result back
+    calibrated = np.zeros(n)
+    for start, end, value, weight in blocks:
+        for j in range(start, end + 1):
+            calibrated[j] = value
+
+    # Map back to original order
+    result_original = np.zeros(n)
+    result_original[order] = calibrated
+    return result_original
 
 
 def temperature_scaling(y_true: np.ndarray,
@@ -1064,7 +1496,26 @@ def temperature_scaling(y_true: np.ndarray,
     Returns:
         Optimal temperature T
     """
-    pass
+    # Grid search for temperature that minimizes NLL on validation set
+    best_T = 1.0
+    best_nll = float('inf')
+
+    for T in np.concatenate([np.linspace(0.1, 5.0, 100), np.linspace(0.01, 0.1, 20)]):
+        # Binary case: p = sigmoid(logit / T)
+        z = y_logits / T
+        z = np.clip(z, -500, 500)
+        p = 1.0 / (1.0 + np.exp(-z))
+        eps = 1e-15
+        p = np.clip(p, eps, 1.0 - eps)
+
+        # Negative log-likelihood
+        nll = -np.mean(y_true * np.log(p) + (1.0 - y_true) * np.log(1.0 - p))
+
+        if nll < best_nll:
+            best_nll = nll
+            best_T = T
+
+    return float(best_T)
 
 
 # =============================================================================
@@ -1083,7 +1534,36 @@ def validate_probability_inputs(y_true: np.ndarray,
         4. Arrays are not empty
         5. No NaN values
     """
-    pass
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+
+    # Check not empty
+    if y_true.size == 0 or y_prob.size == 0:
+        raise ValueError("Input arrays must not be empty.")
+
+    # Check same shape
+    if y_true.shape != y_prob.shape:
+        raise ValueError(
+            f"y_true and y_prob must have the same shape. "
+            f"Got {y_true.shape} and {y_prob.shape}."
+        )
+
+    # Check no NaN
+    if np.any(np.isnan(y_true)):
+        raise ValueError("y_true contains NaN values.")
+    if np.any(np.isnan(y_prob)):
+        raise ValueError("y_prob contains NaN values.")
+
+    # Check y_true is binary
+    unique_vals = np.unique(y_true)
+    if not np.all(np.isin(unique_vals, [0, 1])):
+        raise ValueError("y_true must contain only 0 and 1 values.")
+
+    # Check y_prob in [0, 1]
+    if np.any(y_prob < 0) or np.any(y_prob > 1):
+        raise ValueError("y_prob values must be in [0, 1].")
+
+    return True
 
 
 def bin_predictions(y_prob: np.ndarray,
@@ -1118,7 +1598,27 @@ def bin_predictions(y_prob: np.ndarray,
     Returns:
         Tuple of (bin_indices, bin_edges)
     """
-    pass
+    if strategy == 'uniform':
+        bin_edges = np.linspace(0, 1, n_bins + 1)
+    elif strategy == 'quantile':
+        percentiles = np.linspace(0, 100, n_bins + 1)
+        bin_edges = np.percentile(y_prob, percentiles)
+        # Ensure edges are unique and monotonic
+        bin_edges = np.unique(bin_edges)
+        if len(bin_edges) < n_bins + 1:
+            # Fall back to uniform if not enough unique quantiles
+            bin_edges = np.linspace(0, 1, n_bins + 1)
+    else:
+        raise ValueError(f"Unknown strategy '{strategy}'. Use 'uniform' or 'quantile'.")
+
+    # Assign to bins: digitize gives 1-based index for the interior edges
+    # We use edges[1:-1] so that values in [edges[0], edges[1]) -> 0, etc.
+    indices = np.digitize(y_prob, bin_edges[1:-1])
+    # indices is now 0-based: 0 for the first bin, n_bins-1 for the last
+    # Clip to valid range
+    indices = np.clip(indices, 0, n_bins - 1)
+
+    return (indices, bin_edges)
 
 
 # =============================================================================

@@ -202,7 +202,34 @@ def parse_args() -> argparse.Namespace:
     3. Add flags for dry-run and verbose
     4. Parse and return arguments
     """
-    pass
+    parser = argparse.ArgumentParser(
+        description='Clean and normalize university names across raw CSV files.'
+    )
+    parser.add_argument(
+        '--mapping', default=DEFAULT_MAPPING_PATH,
+        help=f'Path to universities.yaml mapping file (default: {DEFAULT_MAPPING_PATH})'
+    )
+    parser.add_argument(
+        '--raw-dir', default=DEFAULT_RAW_DIR,
+        help=f'Directory containing raw CSV files (default: {DEFAULT_RAW_DIR})'
+    )
+    parser.add_argument(
+        '--output-dir', default=DEFAULT_OUTPUT_DIR,
+        help=f'Directory for cleaned output files (default: {DEFAULT_OUTPUT_DIR})'
+    )
+    parser.add_argument(
+        '--threshold', type=int, default=DEFAULT_FUZZY_THRESHOLD,
+        help=f'Fuzzy matching threshold 0-100 (default: {DEFAULT_FUZZY_THRESHOLD})'
+    )
+    parser.add_argument(
+        '--dry-run', action='store_true',
+        help='Preview changes without saving files'
+    )
+    parser.add_argument(
+        '--verbose', action='store_true',
+        help='Show detailed progress messages'
+    )
+    return parser.parse_args()
 
 
 def validate_paths(args: argparse.Namespace) -> bool:
@@ -222,7 +249,20 @@ def validate_paths(args: argparse.Namespace) -> bool:
     3. Create output directory if it doesn't exist
     4. Return True if all valid, print errors and return False otherwise
     """
-    pass
+    mapping_path = Path(args.mapping)
+    if not mapping_path.exists():
+        print(f"Error: Mapping file not found: {mapping_path}")
+        return False
+
+    raw_dir = Path(args.raw_dir)
+    if not raw_dir.exists():
+        print(f"Error: Raw data directory not found: {raw_dir}")
+        return False
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    return True
 
 
 def load_csv(file_path: str, year: str) -> Optional['pd.DataFrame']:
@@ -254,7 +294,34 @@ def load_csv(file_path: str, year: str) -> Optional['pd.DataFrame']:
     3. Verify required column exists using COLUMN_MAPPING
     4. Return DataFrame or None
     """
-    pass
+    import pandas as pd
+
+    path = Path(file_path)
+    if not path.exists():
+        print(f"Warning: File not found: {path}")
+        return None
+
+    # Try UTF-8, fallback to Latin-1
+    df = None
+    for encoding in ('utf-8', 'latin-1'):
+        try:
+            df = pd.read_csv(file_path, encoding=encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+
+    if df is None:
+        print(f"Error: Could not read {file_path} with any supported encoding")
+        return None
+
+    # Verify required column exists
+    required_col = COLUMN_MAPPING.get(year)
+    if required_col and required_col not in df.columns:
+        print(f"Warning: Column '{required_col}' not found in {file_path}")
+        print(f"  Available columns: {list(df.columns)}")
+        return None
+
+    return df
 
 
 def process_year(
@@ -312,7 +379,33 @@ def process_year(
     5. If not dry_run, save to output_path
     6. Return statistics dictionary
     """
-    pass
+    raw_path = f"{raw_dir}/{year}_Canadian_University_Results.csv"
+    output_path = f"{output_dir}/{year}_cleaned.csv"
+
+    if verbose:
+        print(f"\n=== Processing {year} ===")
+
+    df = load_csv(raw_path, year)
+    if df is None:
+        return {'loaded': 0, 'processed': 0}
+
+    loaded = len(df)
+    if verbose:
+        print(f"Loaded: {loaded:,} rows from {raw_path}")
+
+    uni_col = COLUMN_MAPPING[year]
+    df['university_normalized'] = df[uni_col].apply(normalizer.normalize)
+
+    processed = len(df)
+
+    if not dry_run:
+        df.to_csv(output_path, index=False)
+        if verbose:
+            print(f"Saved: {output_path}")
+    elif verbose:
+        print(f"Dry run: would save to {output_path}")
+
+    return {'loaded': loaded, 'processed': processed}
 
 
 def print_report(normalizer: 'UniversityNormalizer', verbose: bool = False) -> None:
@@ -346,7 +439,23 @@ def print_report(normalizer: 'UniversityNormalizer', verbose: bool = False) -> N
     2. Print summary statistics
     3. If verbose, print invalid values (truncate if many)
     """
-    pass
+    report = normalizer.get_report()
+
+    print("\n=== Normalization Report ===")
+    print(f"Total: {report['total']:,}")
+    print(f"Exact matches: {report['exact_matches']:,}")
+    print(f"Fuzzy matches: {report['fuzzy_matches']:,}")
+    print(f"Invalid: {report['invalid']:,}")
+    print(f"Match rate: {report['match_rate']:.1f}%")
+
+    if verbose and report['invalid_values']:
+        from collections import Counter
+        counts = Counter(report['invalid_values'])
+        print("\nInvalid values:")
+        for value, count in counts.most_common(20):
+            print(f'  - "{value}" ({count} occurrences)')
+        if len(counts) > 20:
+            print(f"  ... and {len(counts) - 20} more")
 
 
 def main() -> int:
@@ -380,7 +489,24 @@ def main() -> int:
     5. print_report(normalizer, args.verbose)
     6. return 0 if match_rate > 95% else 1
     """
-    pass
+    args = parse_args()
+
+    if not validate_paths(args):
+        return 1
+
+    from src.utils.normalize import UniversityNormalizer
+    normalizer = UniversityNormalizer(args.mapping, fuzzy_threshold=args.threshold)
+
+    for year in COLUMN_MAPPING:
+        process_year(
+            year, normalizer, args.raw_dir, args.output_dir,
+            args.dry_run, args.verbose
+        )
+
+    print_report(normalizer, args.verbose)
+
+    report = normalizer.get_report()
+    return 0 if report['match_rate'] > 95.0 else 1
 
 
 # =============================================================================

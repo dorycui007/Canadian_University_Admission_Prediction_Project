@@ -237,12 +237,37 @@ class ReviewItem:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for CSV/JSON output."""
-        pass
+        d = {
+            "cluster_id": self.cluster_id,
+            "canonical": self.canonical,
+            "variant": self.variant,
+            "score": self.score,
+            "frequency": self.frequency,
+            "action": self.action,
+            "notes": self.notes,
+        }
+        if self.merge_target is not None:
+            d["merge_target"] = self.merge_target
+        return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ReviewItem':
         """Create ReviewItem from dictionary."""
-        pass
+        merge_target = data.get("merge_target")
+        if merge_target is not None and merge_target != "":
+            merge_target = int(merge_target)
+        else:
+            merge_target = None
+        return cls(
+            cluster_id=int(data["cluster_id"]),
+            canonical=str(data["canonical"]),
+            variant=str(data["variant"]),
+            score=float(data["score"]),
+            frequency=int(data["frequency"]),
+            action=str(data.get("action", ReviewAction.KEEP)),
+            notes=str(data.get("notes", "")),
+            merge_target=merge_target,
+        )
 
 
 @dataclass
@@ -269,7 +294,18 @@ class ReviewStatistics:
 
     def to_summary(self) -> str:
         """Generate human-readable summary text."""
-        pass
+        lines = [
+            "=== Review Summary ===",
+            f"Total items: {self.total_items:,}",
+            f"Total clusters: {self.total_clusters:,}",
+            f"Items needing review (score < threshold): {self.needs_review:,}",
+            f"High-priority items (freq > 50, score < 90): {self.high_priority:,}",
+        ]
+        if self.by_action:
+            lines.append("\nBy action:")
+            for action, count in sorted(self.by_action.items()):
+                lines.append(f"  {action}: {count:,}")
+        return "\n".join(lines)
 
 
 def parse_args() -> argparse.Namespace:
@@ -305,7 +341,54 @@ def parse_args() -> argparse.Namespace:
     3. Add mode-specific arguments
     4. Parse and return
     """
-    pass
+    parser = argparse.ArgumentParser(
+        description="Generate review files from clustering results and apply corrections."
+    )
+    subparsers = parser.add_subparsers(dest="mode", help="Operating mode")
+
+    # Generate mode
+    gen_parser = subparsers.add_parser("generate", help="Generate review CSV from clusters")
+    gen_parser.add_argument(
+        "--clusters", default="data/review/program_clusters.json",
+        help="Path to clusters JSON file"
+    )
+    gen_parser.add_argument(
+        "--output", default="data/review/program_review.csv",
+        help="Path for review CSV output"
+    )
+    gen_parser.add_argument(
+        "--include-stats", action="store_true",
+        help="Include statistics columns"
+    )
+    gen_parser.add_argument(
+        "--sort-by", choices=["cluster", "score", "frequency", "canonical"],
+        default="cluster", help="Sort order for output"
+    )
+    gen_parser.add_argument(
+        "--min-score", type=float, default=None,
+        help="Only include items with score >= N"
+    )
+    gen_parser.add_argument(
+        "--format", choices=["csv", "excel", "html"], default="csv",
+        help="Output format"
+    )
+
+    # Apply mode
+    apply_parser = subparsers.add_parser("apply", help="Apply corrections from review CSV")
+    apply_parser.add_argument(
+        "--corrections", default="data/review/program_review.csv",
+        help="Path to corrected review CSV"
+    )
+    apply_parser.add_argument(
+        "--mapping-output", default="data/mappings/programs.yaml",
+        help="Path for final YAML mapping"
+    )
+    apply_parser.add_argument(
+        "--validate", action="store_true",
+        help="Validate corrections before applying"
+    )
+
+    return parser.parse_args()
 
 
 def load_clusters(file_path: str) -> Dict[str, Any]:
@@ -328,7 +411,14 @@ def load_clusters(file_path: str) -> Dict[str, Any]:
     2. Validate structure (has 'clusters' key)
     3. Return data
     """
-    pass
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Clusters file not found: {file_path}")
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if "clusters" not in data:
+        raise ValueError(f"Invalid clusters file: missing 'clusters' key in {file_path}")
+    return data
 
 
 def clusters_to_review_items(
@@ -380,7 +470,24 @@ def clusters_to_review_items(
           - Append to list
     3. Return list
     """
-    pass
+    items = []
+    for cluster in clusters_data.get("clusters", []):
+        cluster_id = cluster["id"]
+        canonical = cluster["canonical"]
+        for member in cluster.get("members", []):
+            score = float(member.get("score", 0))
+            if min_score is not None and score < min_score:
+                continue
+            action = ReviewAction.KEEP if score >= 80 else ReviewAction.KEEP
+            items.append(ReviewItem(
+                cluster_id=cluster_id,
+                canonical=canonical,
+                variant=member["name"],
+                score=score,
+                frequency=int(member.get("frequency", 1)),
+                action=action,
+            ))
+    return items
 
 
 def sort_review_items(
@@ -403,7 +510,14 @@ def sort_review_items(
     2. Sort items using appropriate key
     3. Return sorted list
     """
-    pass
+    sort_keys = {
+        "cluster": lambda item: (item.cluster_id, -item.score),
+        "score": lambda item: (item.score, item.cluster_id),
+        "frequency": lambda item: (-item.frequency, item.cluster_id),
+        "canonical": lambda item: (item.canonical, -item.score),
+    }
+    key_func = sort_keys.get(sort_by, sort_keys["cluster"])
+    return sorted(items, key=key_func)
 
 
 def calculate_statistics(
@@ -442,7 +556,23 @@ def calculate_statistics(
     5. Count by action
     6. Return ReviewStatistics
     """
-    pass
+    total_items = len(items)
+    cluster_ids = set(item.cluster_id for item in items)
+    total_clusters = len(cluster_ids)
+    needs_review = sum(1 for item in items if item.score < review_threshold)
+    high_priority = sum(
+        1 for item in items if item.frequency > 50 and item.score < 90
+    )
+    by_action: Dict[str, int] = {}
+    for item in items:
+        by_action[item.action] = by_action.get(item.action, 0) + 1
+    return ReviewStatistics(
+        total_items=total_items,
+        total_clusters=total_clusters,
+        needs_review=needs_review,
+        high_priority=high_priority,
+        by_action=by_action,
+    )
 
 
 def save_review_csv(
@@ -465,7 +595,21 @@ def save_review_csv(
     3. Write header row
     4. Write item rows using csv.DictWriter
     """
-    pass
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = ["cluster_id", "canonical", "variant", "score", "frequency", "action", "notes"]
+    if include_stats:
+        fieldnames.append("merge_target")
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for item in items:
+            row = item.to_dict()
+            # Only keep fields in fieldnames
+            row = {k: v for k, v in row.items() if k in fieldnames}
+            writer.writerow(row)
 
 
 def save_summary(stats: ReviewStatistics, output_path: str) -> None:
@@ -481,7 +625,11 @@ def save_summary(stats: ReviewStatistics, output_path: str) -> None:
     1. Generate summary text using stats.to_summary()
     2. Write to file
     """
-    pass
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(stats.to_summary())
+        f.write("\n")
 
 
 def load_corrections(file_path: str) -> List[ReviewItem]:
@@ -501,7 +649,15 @@ def load_corrections(file_path: str) -> List[ReviewItem]:
     3. Convert to ReviewItem objects
     4. Return list
     """
-    pass
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Corrections file not found: {file_path}")
+    items = []
+    with open(path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            items.append(ReviewItem.from_dict(row))
+    return items
 
 
 def validate_corrections(items: List[ReviewItem]) -> List[str]:
@@ -532,7 +688,49 @@ def validate_corrections(items: List[ReviewItem]) -> List[str]:
     2. Collect error messages
     3. Return list of errors
     """
-    pass
+    errors = []
+    valid_actions = {ReviewAction.KEEP, ReviewAction.SPLIT, ReviewAction.MERGE,
+                     ReviewAction.RENAME, ReviewAction.DELETE}
+    seen_variants = {}
+    cluster_ids = set(item.cluster_id for item in items)
+
+    for i, item in enumerate(items):
+        # Check valid action
+        if item.action not in valid_actions:
+            errors.append(
+                f"Row {i + 1}: Invalid action '{item.action}' for variant '{item.variant}'"
+            )
+
+        # MERGE must have valid merge_target
+        if item.action == ReviewAction.MERGE:
+            if item.merge_target is None:
+                errors.append(
+                    f"Row {i + 1}: MERGE action requires merge_target for '{item.variant}'"
+                )
+            elif item.merge_target not in cluster_ids:
+                errors.append(
+                    f"Row {i + 1}: MERGE target {item.merge_target} not found for '{item.variant}'"
+                )
+
+        # RENAME must have new name in notes
+        if item.action == ReviewAction.RENAME:
+            if not item.notes.strip():
+                errors.append(
+                    f"Row {i + 1}: RENAME action requires new canonical in notes for '{item.variant}'"
+                )
+
+        # Check duplicate variants
+        if item.variant in seen_variants:
+            prev_cluster = seen_variants[item.variant]
+            if prev_cluster != item.cluster_id:
+                errors.append(
+                    f"Row {i + 1}: Duplicate variant '{item.variant}' in clusters "
+                    f"{prev_cluster} and {item.cluster_id}"
+                )
+        else:
+            seen_variants[item.variant] = item.cluster_id
+
+    return errors
 
 
 def apply_corrections(items: List[ReviewItem]) -> Dict[str, List[str]]:
@@ -569,7 +767,50 @@ def apply_corrections(items: List[ReviewItem]) -> Dict[str, List[str]]:
     6. Skip DELETE items
     7. Return mapping
     """
-    pass
+    mapping: Dict[str, List[str]] = {}
+
+    # Build cluster_id -> canonical lookup for MERGE targets
+    canonical_by_id: Dict[int, str] = {}
+    for item in items:
+        canonical_by_id[item.cluster_id] = item.canonical
+
+    # Process RENAME first to update canonical names
+    renamed: Dict[int, str] = {}
+    for item in items:
+        if item.action == ReviewAction.RENAME and item.notes.strip():
+            renamed[item.cluster_id] = item.notes.strip()
+
+    for item in items:
+        if item.action == ReviewAction.DELETE:
+            continue
+
+        if item.action == ReviewAction.KEEP:
+            canonical = renamed.get(item.cluster_id, item.canonical)
+            mapping.setdefault(canonical, [])
+            if item.variant != canonical:
+                mapping[canonical].append(item.variant)
+
+        elif item.action == ReviewAction.SPLIT:
+            # Create new entry with variant as its own canonical
+            mapping.setdefault(item.variant, [])
+
+        elif item.action == ReviewAction.MERGE:
+            if item.merge_target is not None:
+                target_canonical = renamed.get(
+                    item.merge_target,
+                    canonical_by_id.get(item.merge_target, str(item.merge_target))
+                )
+                mapping.setdefault(target_canonical, [])
+                if item.variant != target_canonical:
+                    mapping[target_canonical].append(item.variant)
+
+        elif item.action == ReviewAction.RENAME:
+            canonical = renamed.get(item.cluster_id, item.canonical)
+            mapping.setdefault(canonical, [])
+            if item.variant != canonical:
+                mapping[canonical].append(item.variant)
+
+    return mapping
 
 
 def save_mapping_yaml(mapping: Dict[str, List[str]], output_path: str) -> None:
@@ -586,7 +827,12 @@ def save_mapping_yaml(mapping: Dict[str, List[str]], output_path: str) -> None:
     2. Write mapping with yaml.dump()
     3. Use default_flow_style=False for readability
     """
-    pass
+    import yaml
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.dump(mapping, f, default_flow_style=False, allow_unicode=True, sort_keys=True)
 
 
 def generate_review(args: argparse.Namespace) -> int:
@@ -609,7 +855,31 @@ def generate_review(args: argparse.Namespace) -> int:
     6. Save summary
     7. Print completion message
     """
-    pass
+    try:
+        clusters_data = load_clusters(args.clusters)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError) as e:
+        print(f"Error: {e}")
+        return 1
+
+    min_score = getattr(args, "min_score", None)
+    items = clusters_to_review_items(clusters_data, min_score=min_score)
+
+    sort_by = getattr(args, "sort_by", "cluster")
+    items = sort_review_items(items, sort_by=sort_by)
+
+    stats = calculate_statistics(items)
+
+    include_stats = getattr(args, "include_stats", False)
+    save_review_csv(items, args.output, include_stats=include_stats)
+
+    summary_path = str(Path(args.output).with_suffix(".txt").parent / "review_summary.txt")
+    save_summary(stats, summary_path)
+
+    print(f"Review CSV written to: {args.output}")
+    print(f"Summary written to: {summary_path}")
+    print(stats.to_summary())
+
+    return 0
 
 
 def apply_review(args: argparse.Namespace) -> int:
@@ -630,7 +900,32 @@ def apply_review(args: argparse.Namespace) -> int:
     4. Save mapping YAML
     5. Print completion message
     """
-    pass
+    try:
+        items = load_corrections(args.corrections)
+    except (FileNotFoundError, Exception) as e:
+        print(f"Error loading corrections: {e}")
+        return 1
+
+    if getattr(args, "validate", False):
+        errors = validate_corrections(items)
+        if errors:
+            print("Validation errors found:")
+            for err in errors:
+                print(f"  - {err}")
+            return 1
+        print("Validation passed.")
+
+    mapping = apply_corrections(items)
+
+    output_path = getattr(args, "mapping_output", "data/mappings/programs.yaml")
+    save_mapping_yaml(mapping, output_path)
+
+    print(f"Final mapping written to: {output_path}")
+    print(f"Total canonical programs: {len(mapping)}")
+    total_variants = sum(len(v) for v in mapping.values())
+    print(f"Total variants mapped: {total_variants}")
+
+    return 0
 
 
 def main() -> int:
@@ -640,7 +935,17 @@ def main() -> int:
     Returns:
         Exit code: 0 for success, 1 for failure
     """
-    pass
+    args = parse_args()
+
+    if args.mode == "generate":
+        return generate_review(args)
+    elif args.mode == "apply":
+        return apply_review(args)
+    else:
+        print("Please specify a mode: 'generate' or 'apply'")
+        print("Usage: python scripts/generate_review.py generate --clusters PATH")
+        print("       python scripts/generate_review.py apply --corrections PATH")
+        return 1
 
 
 # =============================================================================
